@@ -1,0 +1,113 @@
+[plugin]
+id = "astra-remote"
+name = "Astra Remote"
+version = "0.1.0"
+description = "Управляй ПК и говори с Astra из приложения на телефоне: пульт с командами Astra, медиа и громкость, файлы и буфер обмена, снимок экрана, сон и блокировка"
+author = "Taill"
+license = "MIT"
+icon = "icon.svg"
+call_timeout_secs = 60
+
+[entry]
+command = "node"
+args = ["dist/index.js"]
+runtimes = ["node"]
+
+[capabilities]
+tools = true
+triggers = true
+ui_contributions = true
+# SendChatMessage is filed under `client`; the capability is what makes the plugin a chat front-end
+client = true
+
+[platform]
+os = ["windows"]
+arch = []
+
+[config]
+schema = """
+{
+  "type": "object",
+  "properties": {
+    "port": {
+      "type": "integer",
+      "default": 8765,
+      "title": "Порт",
+      "description": "На этом порту плагин ждёт приложение в домашней сети (HTTPS). Не пробрасывай его в интернет: вне дома используй Tailscale."
+    },
+    "allow_chat": {
+      "type": "boolean",
+      "default": true,
+      "title": "Чат с Astra с телефона",
+      "description": "Сообщения с телефона уходят в Astra, ответ возвращается на телефон."
+    },
+    "allow_files": {
+      "type": "boolean",
+      "default": true,
+      "title": "Обмен файлами",
+      "description": "Телефон видит только общую папку: присылает файлы в «С телефона» и забирает любые файлы из неё. Astra может положить туда файл для телефона."
+    },
+    "shared_folder": {
+      "type": "string",
+      "default": "",
+      "title": "Общая папка",
+      "description": "Пусто — папка «Astra Remote» в папке пользователя."
+    },
+    "max_upload_mb": {
+      "type": "integer",
+      "default": 2048,
+      "title": "Наибольший файл с телефона, МБ"
+    },
+    "allow_clipboard": {
+      "type": "boolean",
+      "default": true,
+      "title": "Общий буфер обмена",
+      "description": "Текст из буфера телефона — на ПК и обратно, только по кнопке в приложении."
+    },
+    "allow_open_url": {
+      "type": "boolean",
+      "default": true,
+      "title": "Открывать ссылки с телефона",
+      "description": "«Поделиться» → Astra Remote → ссылка открывается в браузере на ПК. Только http и https."
+    },
+    "allow_screenshot": {
+      "type": "boolean",
+      "default": true,
+      "title": "Снимок экрана",
+      "description": "Подключённый телефон может получить снимок экрана ПК. Снимок уходит только на телефон и нигде не сохраняется."
+    },
+    "allow_power": {
+      "type": "boolean",
+      "default": true,
+      "title": "Блокировка, сон, выключение монитора"
+    },
+    "allow_shutdown": {
+      "type": "boolean",
+      "default": false,
+      "title": "Выключение и перезагрузка",
+      "description": "ПК выключается через минуту после команды; отменить можно с телефона или командой shutdown /a."
+    },
+    "confirm_shutdown": {
+      "type": "boolean",
+      "default": true,
+      "title": "Подтверждать выключение на ПК",
+      "description": "На ПК появляется окно «Разрешить?»; без ответа за минуту — отказ."
+    },
+    "key_days": {
+      "type": "integer",
+      "default": 90,
+      "title": "Срок ключа телефона, дней",
+      "description": "Потом телефон подключается заново по QR-коду. 0 — бессрочно."
+    }
+  }
+}
+"""
+
+[bundle]
+schema = "astra.bundle/2"
+target = "noarch"
+
+[permissions]
+client = { reason = "Плагин — собеседник Astra: то, что ты пишешь в чате на телефоне, уходит в Astra, как будто ты набрал это сам." }
+send_chat_message = { reason = "Отправляет твои сообщения с телефона в Astra и возвращает ответ на телефон." }
+fire_trigger = { reason = "Кнопки на телефоне запускают команды Astra, которые ты повесил на триггеры «Astra Remote: кнопка N»." }

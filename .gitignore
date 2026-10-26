@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.astraplugin
+MANIFEST.json
+test/.build/
+android/build/
+android/*.apk
+android/*.apk.idsig
+android/release.keystore
+android/keystore.properties

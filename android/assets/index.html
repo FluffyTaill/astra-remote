@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Astra Remote</title>
+<style>
+:root{--bg:#0e1017;--card:#171a24;--raised:#1f2331;--line:#ffffff14;--text:#eceef5;--muted:#8b92a6;
+  --accent:#8b7cff;--accent-soft:#8b7cff2a;--bad:#ff6b81;--bad-soft:#ff6b8122;--ok:#3ccf91}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px/1.4 Inter,system-ui,Roboto,sans-serif}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+input,textarea{font:inherit;color:inherit}
+.app{display:flex;flex-direction:column;height:100%;max-width:640px;margin:0 auto}
+header{display:flex;align-items:center;gap:10px;padding:12px 16px 10px}
+header h1{font-size:18px;margin:0;font-weight:650;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}
+.dot.on{background:var(--ok);box-shadow:0 0 0 4px #3ccf9122}
+.dot.off{background:var(--bad)}
+main{flex:1;overflow-y:auto;padding:4px 16px 16px}
+nav{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);background:var(--card)}
+nav button{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0 8px;font-size:11.5px;color:var(--muted)}
+nav button svg{width:23px;height:23px}
+nav button.on{color:var(--accent)}
+nav .badge{position:absolute;top:5px;left:calc(50% + 6px);min-width:17px;height:17px;border-radius:9px;background:var(--bad);color:#fff;font-size:11px;line-height:17px;padding:0 4px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
+.card h2{font-size:12.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px;font-weight:600}
+.row{display:flex;align-items:center;gap:10px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.stat{background:var(--raised);border-radius:12px;padding:10px;text-align:center}
+.stat b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.stat span{font-size:12px;color:var(--muted)}
+.np{min-height:42px;margin-bottom:10px}
+.np .t{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.np .a{color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.transport{display:flex;justify-content:center;gap:18px}
+.round{width:54px;height:54px;border-radius:50%;background:var(--raised);display:grid;place-items:center}
+.round.big{width:64px;height:64px;background:var(--accent);color:#fff}
+.round svg{width:24px;height:24px}
+.vol{display:flex;align-items:center;gap:12px;margin-top:14px}
+.vol input{flex:1;accent-color:var(--accent);height:28px}
+.vol .n{width:36px;text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.icon-btn{width:40px;height:40px;border-radius:12px;background:var(--raised);display:grid;place-items:center;flex:none}
+.icon-btn svg{width:21px;height:21px}
+.icon-btn.on{background:var(--bad-soft);color:var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.tile{background:var(--raised);border-radius:14px;padding:14px 6px;min-height:78px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center;font-size:13.5px;transition:transform .08s}
+.tile:active{transform:scale(.96);background:var(--accent-soft)}
+.tile .e{font-size:24px;line-height:1}
+.tile.danger{color:var(--bad)}
+.tile svg{width:26px;height:26px}
+.hint{color:var(--muted);font-size:13px}
+.chat{display:flex;flex-direction:column;height:100%}
+.msgs{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px 0 10px}
+.msg{max-width:86%;padding:9px 12px;border-radius:16px;white-space:pre-wrap;word-wrap:break-word}
+.msg.me{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:5px}
+.msg.ai{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:5px}
+.msg.err{align-self:center;background:var(--bad-soft);color:var(--bad);font-size:13px}
+.msg.typing::after{content:"▍";animation:blink 1s steps(2) infinite;color:var(--muted)}
+@keyframes blink{50%{opacity:0}}
+.compose{display:flex;gap:8px;align-items:flex-end;padding-top:8px}
+.compose textarea{flex:1;resize:none;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:10px 14px;max-height:120px;outline:none}
+.compose textarea:focus{border-color:var(--accent)}
+.send{width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;flex:none}
+.send:disabled{opacity:.45}
+.send svg{width:20px;height:20px}
+.chip{font-size:12.5px;padding:6px 11px;border-radius:999px;background:var(--raised);color:var(--muted)}
+.chip.on{color:var(--accent);background:var(--accent-soft)}
+.shot{width:100%;border-radius:12px;display:block;background:#000;min-height:120px}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.btn{padding:10px 16px;border-radius:12px;background:var(--raised);font-weight:550}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.danger{background:var(--bad-soft);color:var(--bad)}
+.btn:disabled{opacity:.5}
+.btn.wide{width:100%}
+.switch{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
+.switch input{accent-color:var(--accent);width:18px;height:18px}
+.center{min-height:100%;display:flex;flex-direction:column;justify-content:center;gap:14px;padding:24px 8px}
+.center h2{margin:0;font-size:24px}
+.field{width:100%;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;outline:none}
+.field:focus{border-color:var(--accent)}
+.check{font-size:40px;font-weight:700;letter-spacing:.25em;text-align:center;font-variant-numeric:tabular-nums;color:var(--accent);margin:4px 0}
+.toast{position:fixed;left:50%;bottom:84px;transform:translateX(-50%) translateY(20px);background:#000d;color:#fff;padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;transition:.2s;max-width:90%;text-align:center;z-index:30}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.banner{background:var(--bad-soft);color:var(--bad);border-radius:12px;padding:10px 12px;font-size:13.5px;margin-bottom:12px}
+.files{display:flex;flex-direction:column}
+.file{display:flex;align-items:center;gap:12px;padding:10px 2px;border-top:1px solid var(--line);text-align:left;width:100%}
+.file:first-child{border-top:0}
+.file .ic{width:36px;height:36px;border-radius:10px;background:var(--raised);display:grid;place-items:center;flex:none;color:var(--muted)}
+.file .ic svg{width:19px;height:19px}
+.file .nm{flex:1;min-width:0}
+.file .nm b{display:block;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file .nm span{font-size:12.5px;color:var(--muted)}
+.crumbs{display:flex;gap:4px;align-items:center;flex-wrap:wrap;font-size:13.5px;color:var(--muted);margin-bottom:8px}
+.crumbs button{color:var(--accent);padding:2px 0}
+.bar{height:4px;border-radius:2px;background:var(--raised);overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--accent);width:0}
+.xfer{padding:8px 0;border-top:1px solid var(--line);font-size:13.5px}
+.xfer:first-of-type{border-top:0}
+.xfer .s{color:var(--muted);font-size:12.5px}
+.xfer.bad .s{color:var(--bad)}
+.sheet{position:fixed;inset:0;background:#0009;display:flex;align-items:flex-end;justify-content:center;z-index:20}
+.sheet>div{background:var(--card);border-radius:20px 20px 0 0;padding:18px 16px 22px;width:100%;max-width:640px;display:flex;flex-direction:column;gap:10px}
+.sheet .preview{background:var(--raised);border-radius:12px;padding:10px 12px;max-height:120px;overflow:auto;white-space:pre-wrap;word-break:break-all;font-size:13.5px}
+.viewer{position:fixed;inset:0;background:#000;overflow:auto;z-index:25}
+.viewer img{display:block;width:200%;max-width:none}
+.setting{display:flex;align-items:center;gap:12px;padding:6px 0}
+.setting div{flex:1}
+.setting input{accent-color:var(--accent);width:20px;height:20px}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+<div class="toast" id="toast"></div>
+<div id="layer"></div>
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const svg = (d, fill) => `<svg viewBox="0 0 24 24" ${fill ? 'fill="currentColor"' : 'fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"'}>${d}</svg>`;
+const ICON = {
+  remote: svg('<rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/>'),
+  chat: svg('<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>'),
+  files: svg('<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>'),
+  screen: svg('<rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>'),
+  more: svg('<path d="M12 3v9"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/>'),
+  prev: svg('<path d="M6 5h2v14H6zM20 5v14L9 12z"/>', 1),
+  next: svg('<path d="M16 5h2v14h-2zM4 5v14l11-7z"/>', 1),
+  play: svg('<path d="M7 4.5v15l13-7.5z"/>', 1),
+  pause: svg('<path d="M6 4.5h4v15H6zM14 4.5h4v15h-4z"/>', 1),
+  vol: svg('<path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/>'),
+  mute: svg('<path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/>'),
+  send: svg('<path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z"/>', 1),
+  stop: svg('<rect x="6" y="6" width="12" height="12" rx="2"/>', 1),
+  lock: svg('<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>'),
+  moon: svg('<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>'),
+  monitor: svg('<rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4M5 6.5l14 8"/>'),
+  power: svg('<path d="M12 3v9"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/>'),
+  restart: svg('<path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/>'),
+  cancel: svg('<circle cx="12" cy="12" r="9"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7"/>'),
+  folder: svg('<path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>'),
+  file: svg('<path d="M14 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/><path d="M14 3.5v5h5"/>'),
+  down: svg('<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>'),
+  up: svg('<path d="M12 20V9M7 13.5l5-5 5 5M5 4h14"/>'),
+  clip: svg('<rect x="7" y="4" width="10" height="4" rx="1.5"/><path d="M7 6H5.5a1.5 1.5 0 0 0-1.5 1.5v12A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-12A1.5 1.5 0 0 0 18.5 6H17"/>')
+};
+
+// ── storage and the bridge to the phone ─────────────────────────────────────
+// The page has no network of its own: window.AR (Bridge.java) makes every request, with the device key
+// that only Java sees, to the one PC whose certificate came in the QR code.
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("ar." + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("ar." + k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem("ar." + k); } catch {} }
+};
+const status = () => { try { return JSON.parse(AR.status()); } catch { return {}; } };
+let me = status();
+
+let seq = 0;
+const waiting = new Map();
+window.__native = (id, code, text) => {
+  const f = waiting.get(id);
+  if (f) { waiting.delete(id); f({ status: code, text }); }
+};
+const native = (start) => new Promise((resolve) => { const id = String(++seq); waiting.set(id, resolve); start(id); });
+const errorOf = (text) => { try { return JSON.parse(text).error || ""; } catch { return ""; } };
+function check(r) {
+  if (r.status === 0) throw new Error(errorOf(r.text) || "ПК не отвечает");
+  if (r.status === 401) throw new Error("Телефон отключён на ПК");
+  if (r.status >= 400) throw new Error(errorOf(r.text) || "Ошибка " + r.status);
+  return r;
+}
+async function api(method, path, body) {
+  return check(await native((id) => AR.call(id, method, path, body ? JSON.stringify(body) : "")));
+}
+const getJson = (p) => api("GET", p).then((r) => JSON.parse(r.text));
+const post = (p, b) => api("POST", p, b || {}).then((r) => JSON.parse(r.text));
+
+function toast(text) {
+  const t = $("#toast");
+  t.textContent = text;
+  t.classList.add("show");
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => t.classList.remove("show"), 2600);
+}
+const buzz = () => { try { AR.vibrate(); } catch {} };
+
+// the PC forgot this phone (unpaired there, or the key ran out)
+window.__forgotten = () => {
+  me = status();
+  state = null;
+  stopPolling();
+  store.del("chat");
+  render();
+};
+
+// Android's back button: close what is open, else go to the first tab, else leave the app
+window.__back = () => {
+  if ($("#layer").innerHTML) { $("#layer").innerHTML = ""; return true; }
+  if (me.paired && filePath && tab === "files") { openDir(filePath.split("/").slice(0, -1).join("/")); return true; }
+  if (me.paired && tab !== "remote") { tab = "remote"; store.set("tab", tab); render(); return true; }
+  return false;
+};
+
+// ── state ───────────────────────────────────────────────────────────────────
+let tab = store.get("tab", "remote");
+let state = null;
+let online = null;
+let pollTimer = null;
+let volDragging = false;
+
+async function refresh() {
+  try {
+    state = await getJson("/api/state");
+    online = true;
+  } catch (e) {
+    online = false;
+  }
+  if (!me.paired) return;
+  paintStatus();
+  paintBadge();
+  if (tab === "remote") paintRemote();
+}
+function startPolling() {
+  stopPolling();
+  refresh();
+  pollTimer = setInterval(() => { if (!document.hidden) refresh(); }, 4000);
+}
+function stopPolling() { clearInterval(pollTimer); pollTimer = null; }
+document.addEventListener("visibilitychange", () => { if (!document.hidden && me.paired) refresh(); });
+
+// ── layout ──────────────────────────────────────────────────────────────────
+const TABS = [["remote", "Пульт"], ["chat", "Чат"], ["files", "Файлы"], ["screen", "Экран"], ["more", "Ещё"]];
+function render() {
+  const app = $("#app");
+  if (!me.paired) return renderPair(app);
+  if (!TABS.some(([id]) => id === tab)) tab = "remote";
+  app.innerHTML = `
+    <header><span class="dot" id="dot"></span><h1 id="host">${esc(me.pc || "Astra Remote")}</h1></header>
+    <main id="main"></main>
+    <nav>${TABS.map(([id, label]) => `<button data-tab="${id}" class="${tab === id ? "on" : ""}">${ICON[id]}<span>${label}</span></button>`).join("")}</nav>`;
+  app.querySelectorAll("nav button").forEach((b) => b.onclick = () => { tab = b.dataset.tab; store.set("tab", tab); render(); });
+  const main = $("#main");
+  ({ remote: renderRemote, chat: renderChat, files: renderFiles, screen: renderScreen, more: renderMore })[tab](main);
+  paintStatus();
+  paintBadge();
+  if (!pollTimer) startPolling();
+}
+
+function paintStatus() {
+  const dot = $("#dot");
+  if (!dot) return;
+  dot.className = "dot " + (online === true ? "on" : online === false ? "off" : "");
+  $("#host").textContent = state?.system?.host || me.pc || "Astra Remote";
+}
+
+// files Astra sent to the phone that have not been looked at yet
+function unseenSent() {
+  const seen = store.get("seenSent", "");
+  return (state?.sent || []).filter((s) => s.at > seen);
+}
+function paintBadge() {
+  const b = $('nav [data-tab="files"]');
+  if (!b) return;
+  const n = tab === "files" ? 0 : unseenSent().length;
+  let el = $(".badge", b);
+  if (!n) { el?.remove(); return; }
+  if (!el) { el = document.createElement("span"); el.className = "badge"; b.appendChild(el); }
+  el.textContent = n;
+}
+
+// ── pairing ─────────────────────────────────────────────────────────────────
+function renderPair(app) {
+  stopPolling();
+  app.innerHTML = `<main><div class="center">
+    <h2>Подключить к ПК</h2>
+    <p class="hint" style="margin:0">1. На компьютере: Astra → <b>Astra Remote</b> → «Подключить телефон».<br>2. Здесь нажми «Сканировать QR-код» и наведи камеру на код.<br>3. На ПК появится запрос — нажми «Разрешить», если код совпадает.</p>
+    <input class="field" id="name" maxlength="40" placeholder="Имя этого телефона" value="${esc(store.get("name", me.device || ""))}">
+    <div id="pairBox"><button class="btn primary wide" id="scan">Сканировать QR-код</button></div>
+    <p class="hint" id="pairMsg" style="margin:0"></p>
+  </div></main>`;
+  $("#scan").onclick = startScan;
+}
+function startScan() {
+  const name = $("#name").value.trim();
+  store.set("name", name);
+  $("#pairMsg").textContent = "";
+  AR.scan(name);
+}
+window.__pair = (e) => {
+  if (me.paired && e.state !== "ok") return;
+  const box = $("#pairBox"), msg = $("#pairMsg");
+  if (!box) return;
+  const scanBtn = '<button class="btn primary wide" id="scan">Сканировать QR-код</button>';
+  if (e.state === "connecting") {
+    box.innerHTML = `<p class="hint" style="text-align:center">Подключаюсь к «${esc(e.message)}»…</p>`;
+  } else if (e.state === "wait") {
+    box.innerHTML = `<div class="card" style="text-align:center">
+      <p style="margin:0">На ПК появился запрос от этого телефона. Если там тот же код — нажми <b>«Разрешить»</b>.</p>
+      <div class="check">${esc(e.check)}</div>
+      <button class="btn" id="cancelPair">Отмена</button></div>`;
+    $("#cancelPair").onclick = () => { AR.cancelPairing(); box.innerHTML = scanBtn; $("#scan").onclick = startScan; };
+  } else if (e.state === "ok") {
+    me = status();
+    toast("Подключено к «" + (me.pc || "ПК") + "»");
+    tab = "remote";
+    render();
+    return;
+  } else {
+    box.innerHTML = scanBtn;
+    $("#scan").onclick = startScan;
+    msg.textContent = e.state === "error" ? e.message : "";
+    if (e.state === "error") msg.style.color = "var(--bad)";
+  }
+};
+
+// ── remote ──────────────────────────────────────────────────────────────────
+function renderRemote(main) {
+  main.innerHTML = `
+    <div id="banner"></div>
+    <div class="card"><div class="stats" id="stats"></div></div>
+    <div class="card">
+      <div class="np" id="np"></div>
+      <div class="transport">
+        <button class="round" data-key="prev" aria-label="Назад">${ICON.prev}</button>
+        <button class="round big" data-key="play_pause" id="pp" aria-label="Пауза">${ICON.play}</button>
+        <button class="round" data-key="next" aria-label="Дальше">${ICON.next}</button>
+      </div>
+      <div class="vol">
+        <button class="icon-btn" id="mute" aria-label="Звук">${ICON.vol}</button>
+        <input type="range" min="0" max="100" step="1" id="vol">
+        <span class="n" id="voln"></span>
+      </div>
+    </div>
+    <div class="card"><h2>Кнопки</h2><div class="grid" id="buttons"></div></div>`;
+  main.querySelectorAll("[data-key]").forEach((b) => b.onclick = async () => {
+    buzz();
+    try { await post("/api/media", { key: b.dataset.key }); setTimeout(refresh, 700); } catch (e) { toast(e.message); }
+  });
+  const vol = $("#vol");
+  let sendTimer = null;
+  vol.oninput = () => {
+    volDragging = true;
+    $("#voln").textContent = vol.value;
+    clearTimeout(sendTimer);
+    sendTimer = setTimeout(() => post("/api/volume", { volume: Number(vol.value) }).catch((e) => toast(e.message)), 120);
+  };
+  vol.onchange = () => { setTimeout(() => { volDragging = false; }, 600); };
+  $("#mute").onclick = async () => {
+    buzz();
+    try {
+      const v = await post("/api/volume", { muted: !state?.volume?.muted });
+      if (state) state.volume = v;
+      paintRemote();
+    } catch (e) { toast(e.message); }
+  };
+  paintRemote();
+}
+
+function paintRemote() {
+  if (!$("#stats")) return;
+  const s = state;
+  $("#banner").innerHTML = online === false ? '<div class="banner">ПК не отвечает. Проверь, что ПК включён, Astra запущена, а телефон в той же сети (или в Tailscale).</div>' : "";
+  if (!s) return;
+  const sys = s.system || {};
+  $("#stats").innerHTML = `
+    <div class="stat"><b>${sys.cpu ?? "–"}%</b><span>процессор</span></div>
+    <div class="stat"><b>${sys.ramUsed ?? "–"}%</b><span>память</span></div>
+    <div class="stat"><b>${fmtUptime(sys.uptimeMin)}</b><span>работает</span></div>`;
+  const m = s.media;
+  $("#np").innerHTML = m && (m.title || m.artist)
+    ? `<div class="t">${esc(m.title || "Без названия")}</div><div class="a">${esc(m.artist || appName(m.app))}</div>`
+    : '<div class="t" style="color:var(--muted);font-weight:500">Ничего не играет</div><div class="a">Кнопки управляют любым плеером на ПК</div>';
+  $("#pp").innerHTML = m?.playing ? ICON.pause : ICON.play;
+  if (s.volume) {
+    if (!volDragging) { $("#vol").value = s.volume.volume; $("#voln").textContent = s.volume.volume; }
+    const mute = $("#mute");
+    mute.classList.toggle("on", !!s.volume.muted);
+    mute.innerHTML = s.volume.muted ? ICON.mute : ICON.vol;
+  }
+  const btns = s.buttons || [];
+  const box = $("#buttons");
+  const sig = JSON.stringify(btns);
+  if (box.dataset.sig === sig) return;
+  box.dataset.sig = sig;
+  box.innerHTML = btns.length
+    ? btns.map((b) => `<button class="tile" data-n="${b.n}">${b.icon ? `<span class="e">${esc(b.icon)}</span>` : ""}<span>${esc(b.label)}</span></button>`).join("")
+    : '<p class="hint" style="grid-column:1/-1;margin:0">Кнопок пока нет. В Astra открой Astra Remote → «Кнопки», подпиши кнопку и повесь на неё команду Astra.</p>';
+  box.querySelectorAll("[data-n]").forEach((b) => b.onclick = async () => {
+    buzz();
+    try { await post("/api/button", { n: Number(b.dataset.n) }); toast("Готово"); } catch (e) { toast(e.message); }
+  });
+}
+const fmtUptime = (m) => m == null ? "–" : m < 60 ? m + " мин" : m < 1440 ? Math.floor(m / 60) + " ч" : Math.floor(m / 1440) + " д";
+const appName = (id) => String(id || "").replace(/\.exe$/i, "").split(/[!\\.]/).filter(Boolean).pop() || "";
+
+// ── chat ────────────────────────────────────────────────────────────────────
+let chatLog = store.get("chat", []);
+let streaming = null;
+const chats = new Map();
+window.__chat = (id, line) => {
+  const h = chats.get(id);
+  if (!h) return;
+  if (line === null) { chats.delete(id); h.end(); return; }
+  try { h.chunk(JSON.parse(line)); } catch {}
+};
+
+function renderChat(main) {
+  main.style.paddingBottom = "10px";
+  main.innerHTML = `<div class="chat">
+    <div class="row" style="justify-content:space-between"><span class="hint">Разговор с Astra на ПК</span><button class="chip" id="new">Новый диалог</button></div>
+    <div class="msgs" id="msgs"></div>
+    <div class="compose"><textarea id="text" rows="1" placeholder="Напиши Astra…"></textarea><button class="send" id="send" aria-label="Отправить">${streaming ? ICON.stop : ICON.send}</button></div>
+  </div>`;
+  paintMsgs();
+  const ta = $("#text");
+  ta.value = store.get("draft", "");
+  ta.oninput = () => { ta.style.height = "auto"; ta.style.height = Math.min(120, ta.scrollHeight) + "px"; store.set("draft", ta.value); };
+  $("#send").onclick = () => (streaming ? AR.stopChat() : sendChat());
+  $("#new").onclick = () => {
+    chatLog = [];
+    store.set("chat", chatLog);
+    store.set("fresh", true);
+    paintMsgs();
+    toast("Следующее сообщение начнёт новый диалог");
+  };
+}
+
+function paintMsgs() {
+  const box = $("#msgs");
+  if (!box) return;
+  const items = chatLog.map((m) => `<div class="msg ${m.role}">${esc(m.text)}</div>`);
+  if (streaming) items.push(`<div class="msg ai typing">${esc(streaming.text)}</div>`);
+  const off = state && !state.allow?.chat ? '<div class="msg err">Чат выключен в настройках плагина на ПК.</div>' : "";
+  box.innerHTML = off + (items.join("") || '<p class="hint" style="text-align:center;margin-top:40px">Спроси что-нибудь — ответ появится здесь по мере написания. Astra может и сделать что-то на ПК, например отправить тебе файл, если попросить.</p>');
+  box.scrollTop = box.scrollHeight;
+}
+
+async function sendChat(given) {
+  const ta = $("#text");
+  const text = (given ?? ta?.value ?? "").trim();
+  if (!text || streaming) return;
+  if (ta && given === undefined) { ta.value = ""; ta.style.height = "auto"; store.del("draft"); }
+  chatLog.push({ role: "me", text });
+  streaming = { text: "" };
+  if ($("#send")) $("#send").innerHTML = ICON.stop;
+  paintMsgs();
+  const fresh = store.get("fresh", false);
+  store.del("fresh");
+  let error = "";
+  await new Promise((end) => {
+    const id = String(++seq);
+    chats.set(id, {
+      chunk: (c) => {
+        if (c.text) { streaming.text += c.text; paintMsgs(); }
+        if (c.error) error = c.error;
+      },
+      end
+    });
+    AR.chat(id, text, !!fresh);
+  });
+  if (streaming.text) chatLog.push({ role: "ai", text: streaming.text });
+  else if (!error) chatLog.push({ role: "err", text: "Astra ничего не ответила" });
+  if (error) chatLog.push({ role: "err", text: error });
+  streaming = null;
+  chatLog = chatLog.slice(-60);
+  store.set("chat", chatLog);
+  if ($("#send")) $("#send").innerHTML = ICON.send;
+  paintMsgs();
+  refresh(); // Astra may have sent a file
+}
+
+// ── files ───────────────────────────────────────────────────────────────────
+let filePath = "";
+let listing = null;
+const transfers = []; // { key, kind: "up"|"down", name, done, total, state, info }
+
+const fmtSize = (n) => n == null || n < 0 ? "" : n < 1024 ? n + " Б" : n < 1048576 ? (n / 1024).toFixed(0) + " КБ" : n < 1073741824 ? (n / 1048576).toFixed(1) + " МБ" : (n / 1073741824).toFixed(2) + " ГБ";
+const fmtDate = (iso) => { const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleDateString("ru-RU", { day: "numeric", month: "short" }) + " " + d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }); };
+
+window.__files = (e) => {
+  if (e.kind === "error") { toast(e.info); return; }
+  if (e.kind === "queued") { toast(e.total === 1 ? "Отправляю файл на ПК…" : `Отправляю ${e.total} файлов на ПК…`); return; }
+  const kind = e.kind.startsWith("up") ? "up" : "down";
+  let t = transfers.find((x) => x.kind === kind && x.name === e.name && x.state === "run");
+  if (!t) { t = { kind, name: e.name, state: "run" }; transfers.unshift(t); transfers.length = Math.min(transfers.length, 12); }
+  t.done = e.done; t.total = e.total;
+  if (e.kind === "upDone") { t.state = "ok"; t.info = e.info; if (tab !== "files") toast("Файл на ПК: " + e.info); if (tab === "files") loadDir(); }
+  if (e.kind === "downDone") { t.state = "ok"; t.info = e.info; if (tab !== "files") toast("Сохранено в «Загрузки»: " + e.name); }
+  if (e.kind === "upError" || e.kind === "downError") { t.state = "bad"; t.info = e.info; if (tab !== "files") toast(e.info); }
+  paintTransfers();
+};
+
+function renderFiles(main) {
+  const allow = state?.allow || {};
+  if (state && allow.files === false) { main.innerHTML = '<div class="card hint">Обмен файлами выключен в настройках плагина на ПК.</div>'; return; }
+  const sent = state?.sent || [];
+  if (sent.length) store.set("seenSent", sent[0].at);
+  main.innerHTML = `
+    <div class="toolbar"><button class="btn primary" id="pick">${"Отправить на ПК"}</button><button class="btn" id="reload">Обновить</button></div>
+    <div class="card" id="xferCard" hidden><h2>Передача</h2><div id="xfers"></div></div>
+    ${sent.length ? `<div class="card"><h2>Astra прислала</h2><div class="files" id="sent"></div></div>` : ""}
+    <div class="card"><h2>Общая папка на ПК</h2><div class="crumbs" id="crumbs"></div><div class="files" id="list"><p class="hint">Загружаю…</p></div></div>
+    <p class="hint">Всё, что отправляешь с телефона, попадает в папку «С телефона». Astra видит эту папку и может сама положить сюда файл для тебя — просто попроси её в чате. Отправить на ПК можно и из любого приложения: «Поделиться» → Astra Remote.</p>`;
+  $("#pick").onclick = () => AR.pickFiles();
+  $("#reload").onclick = () => { refresh(); loadDir(); };
+  if (sent.length) {
+    $("#sent").innerHTML = sent.slice(0, 8).map((s, i) => fileRow({ name: s.name, size: s.size, mtime: s.at, dir: false }, "s" + i)).join("");
+    $("#sent").querySelectorAll("[data-i]").forEach((b) => b.onclick = () => fetchFile(sent[Number(b.dataset.i.slice(1))].path, sent[Number(b.dataset.i.slice(1))].name));
+  }
+  paintTransfers();
+  if (listing && listing.path === filePath) paintDir(); else loadDir();
+}
+
+const fileRow = (f, i) => `<button class="file" data-i="${i}"><span class="ic">${f.dir ? ICON.folder : ICON.file}</span>
+  <span class="nm"><b>${esc(f.name)}</b><span>${f.dir ? "папка" : [fmtSize(f.size), fmtDate(f.mtime)].filter(Boolean).join(" · ")}</span></span>
+  ${f.dir ? "" : `<span class="ic" style="background:none;color:var(--accent)">${ICON.down}</span>`}</button>`;
+
+async function loadDir() {
+  try {
+    listing = await getJson("/api/files?path=" + encodeURIComponent(filePath));
+    filePath = listing.path;
+  } catch (e) {
+    listing = { path: filePath, items: [], error: e.message };
+  }
+  if (tab === "files") paintDir();
+}
+function openDir(p) { filePath = p; listing = null; loadDir(); }
+
+function paintDir() {
+  const list = $("#list");
+  if (!list || !listing) return;
+  const parts = filePath ? filePath.split("/") : [];
+  $("#crumbs").innerHTML = `<button data-p="">${esc(listing.root || "Astra Remote")}</button>` +
+    parts.map((p, i) => ` / <button data-p="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</button>`).join("");
+  $("#crumbs").querySelectorAll("button").forEach((b) => b.onclick = () => openDir(b.dataset.p));
+  if (listing.error) { list.innerHTML = `<p class="hint" style="color:var(--bad)">${esc(listing.error)}</p>`; return; }
+  const items = listing.items || [];
+  list.innerHTML = items.length ? items.map((f, i) => fileRow(f, i)).join("") : '<p class="hint">Здесь пусто.</p>';
+  list.querySelectorAll("[data-i]").forEach((b) => b.onclick = () => {
+    const f = items[Number(b.dataset.i)];
+    const p = (filePath ? filePath + "/" : "") + f.name;
+    if (f.dir) openDir(p); else fetchFile(p, f.name, f.size);
+  });
+}
+
+function fetchFile(p, name, size) {
+  if (size > 200 * 1048576 && !confirm(`«${name}» весит ${fmtSize(size)}. Скачать на телефон?`)) return;
+  buzz();
+  AR.download(p, name);
+}
+
+function paintTransfers() {
+  const card = $("#xferCard");
+  if (!card) return;
+  card.hidden = !transfers.length;
+  $("#xfers").innerHTML = transfers.map((t, i) => {
+    const pct = t.total > 0 ? Math.min(100, Math.round(100 * t.done / t.total)) : t.state === "run" ? 10 : 100;
+    const what = t.kind === "up" ? "на ПК" : "на телефон";
+    const line = t.state === "run" ? `${what} · ${fmtSize(t.done)}${t.total > 0 ? " из " + fmtSize(t.total) : ""}`
+      : t.state === "ok" ? (t.kind === "up" ? "на ПК: " + esc(t.info) : "в «Загрузках» · нажми, чтобы открыть") : esc(t.info);
+    return `<div class="xfer ${t.state === "bad" ? "bad" : ""}" data-t="${i}"><div class="row"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.kind === "up" ? "↑" : "↓"} ${esc(t.name)}</span></div>
+      <div class="s">${line}</div>${t.state === "run" ? `<div class="bar"><i style="width:${pct}%"></i></div>` : ""}</div>`;
+  }).join("");
+  $("#xfers").querySelectorAll("[data-t]").forEach((el) => el.onclick = () => {
+    const t = transfers[Number(el.dataset.t)];
+    if (t.kind === "down" && t.state === "ok" && t.info) AR.openDownloaded(t.info);
+  });
+}
+
+// ── screen ──────────────────────────────────────────────────────────────────
+let shotUrl = null;
+let autoShot = null;
+let screenIndex = 0;
+
+function renderScreen(main) {
+  if (state && !state.allow?.screenshot) {
+    main.innerHTML = '<div class="card hint">Снимок экрана выключен в настройках плагина на ПК.</div>';
+    return;
+  }
+  const n = state?.screens || 1;
+  main.innerHTML = `
+    <div class="toolbar">
+      <button class="btn primary" id="snap">Обновить</button>
+      <label class="switch"><input type="checkbox" id="auto"> каждые 3 с</label>
+      ${n > 1 ? `<span style="flex:1"></span>${Array.from({ length: n }, (_, i) => `<button class="chip ${i === screenIndex ? "on" : ""}" data-s="${i}">${i + 1}</button>`).join("")}` : ""}
+    </div>
+    <img class="shot" id="shot" alt="">
+    <p class="hint">Нажми на снимок, чтобы рассмотреть в полном размере.</p>`;
+  $("#snap").onclick = snap;
+  $("#auto").checked = !!autoShot;
+  $("#auto").onchange = (e) => {
+    clearInterval(autoShot);
+    autoShot = e.target.checked ? setInterval(() => { if (!document.hidden && $("#shot")) snap(); else if (!$("#shot")) { clearInterval(autoShot); autoShot = null; } }, 3000) : null;
+  };
+  main.querySelectorAll("[data-s]").forEach((b) => b.onclick = () => { screenIndex = Number(b.dataset.s); renderScreen(main); snap(); });
+  $("#shot").onclick = () => {
+    if (!shotUrl) return;
+    $("#layer").innerHTML = `<div class="viewer" id="viewer"><img src="${shotUrl}" alt=""></div>`;
+    $("#viewer").onclick = () => { $("#layer").innerHTML = ""; };
+  };
+  if (shotUrl) $("#shot").src = shotUrl; else snap();
+}
+
+async function snap() {
+  if (!$("#shot") || snap.busy) return;
+  snap.busy = true;
+  try {
+    const w = Math.min(2400, Math.round(screen.width * (devicePixelRatio || 1) * 1.5));
+    const r = check(await native((id) => AR.screenshot(id, screenIndex, w)));
+    shotUrl = "data:image/jpeg;base64," + r.text;
+    if ($("#shot")) $("#shot").src = shotUrl;
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    snap.busy = false;
+  }
+}
+
+// ── more: power, clipboard, settings ────────────────────────────────────────
+function renderMore(main) {
+  const allow = state?.allow || {};
+  const items = [
+    ["lock", "Заблокировать", ICON.lock, ""],
+    ["monitor_off", "Выключить монитор", ICON.monitor, ""],
+    ["sleep", "Сон", ICON.moon, "Перевести ПК в сон? Разбудить его с телефона не получится."],
+    ...(allow.shutdown ? [
+      ["shutdown", "Выключить", ICON.power, "Выключить ПК через минуту?", "danger"],
+      ["restart", "Перезагрузить", ICON.restart, "Перезагрузить ПК через минуту?", "danger"],
+      ["cancel", "Отменить выключение", ICON.cancel, ""]
+    ] : [])
+  ];
+  const power = allow.power === false
+    ? '<div class="card hint">Питание выключено в настройках плагина на ПК.</div>'
+    : `<div class="card"><h2>Питание</h2><div class="grid">${items.map(([id, label, icon, , cls]) =>
+        `<button class="tile ${cls || ""}" data-p="${id}">${icon}<span>${label}</span></button>`).join("")}</div>
+       ${allow.shutdown ? (allow.confirm ? '<p class="hint" style="margin:12px 0 0">Выключение и перезагрузку нужно подтвердить на ПК.</p>' : "")
+         : '<p class="hint" style="margin:12px 0 0">Выключение и перезагрузку можно разрешить в настройках плагина на ПК.</p>'}</div>`;
+  const clip = allow.clipboard === false ? "" : `<div class="card"><h2>Буфер обмена</h2><div class="grid" style="grid-template-columns:1fr 1fr">
+      <button class="tile" id="clipUp">${ICON.up}<span>С телефона на ПК</span></button>
+      <button class="tile" id="clipDown">${ICON.down}<span>С ПК на телефон</span></button></div>
+      <p class="hint" style="margin:10px 0 0">Только текст. Ссылку из другого приложения можно открыть на ПК: «Поделиться» → Astra Remote.</p></div>`;
+  const lockRow = me.lockAvailable
+    ? `<label class="setting"><div>Блокировать приложение<br><span class="hint">Через минуту в фоне — отпечаток, лицо или PIN телефона</span></div><input type="checkbox" id="lockSet" ${me.lock ? "checked" : ""}></label>`
+    : '<p class="hint" style="margin:0 0 8px">Чтобы приложение блокировалось в фоне, поставь на телефон PIN, графический ключ или отпечаток.</p>';
+  const key = state?.device?.expires ? `<p class="hint" style="margin:8px 0">Ключ этого телефона действует до ${new Date(state.device.expires).toLocaleDateString("ru-RU")}. Потом нужно будет подключиться заново по QR-коду.</p>` : "";
+  main.innerHTML = power + clip + `<div class="card"><h2>Это устройство</h2>${lockRow}${key}
+    <button class="btn danger" id="unpair" style="margin-top:6px">Отключить этот телефон</button></div>`;
+
+  main.querySelectorAll("[data-p]").forEach((b) => b.onclick = async () => {
+    const it = items.find((x) => x[0] === b.dataset.p);
+    if (it[3] && !confirm(it[3])) return;
+    buzz();
+    const needsPc = allow.confirm && (it[0] === "shutdown" || it[0] === "restart");
+    if (needsPc) toast("Подтверди на ПК…");
+    try { await post("/api/power", { action: it[0] }); toast(it[0] === "cancel" ? "Выключение отменено" : "Готово"); } catch (e) { toast(e.message); }
+  });
+  if ($("#clipUp")) $("#clipUp").onclick = async () => {
+    const text = AR.readClipboard();
+    if (!text) { toast("Буфер телефона пуст"); return; }
+    buzz();
+    try { await post("/api/clipboard", { text }); toast("Скопировано на ПК"); } catch (e) { toast(e.message); }
+  };
+  if ($("#clipDown")) $("#clipDown").onclick = async () => {
+    buzz();
+    try {
+      const r = await getJson("/api/clipboard");
+      if (!r.text) { toast("В буфере ПК нет текста"); return; }
+      AR.writeClipboard(r.text);
+      toast("Скопировано на телефон");
+    } catch (e) { toast(e.message); }
+  };
+  if ($("#lockSet")) $("#lockSet").onchange = (e) => { AR.setLock(e.target.checked); me.lock = e.target.checked; };
+  $("#unpair").onclick = () => {
+    if (!confirm("Отключить этот телефон? Подключать заново придётся по QR-коду.")) return;
+    AR.unpair();
+  };
+}
+
+// ── shared from other apps ──────────────────────────────────────────────────
+window.__shared = (e) => {
+  if (!me.paired) { toast("Сначала подключи телефон к ПК"); return; }
+  const text = String(e.text || "");
+  const url = (text.match(/https?:\/\/\S+/) || [])[0];
+  const allow = state?.allow || {};
+  $("#layer").innerHTML = `<div class="sheet" id="sheet"><div>
+    <b>Отправить на ПК</b>
+    <div class="preview">${esc(text.slice(0, 1000))}</div>
+    ${url && allow.open_url !== false ? '<button class="btn primary" data-a="open">Открыть ссылку на ПК</button>' : ""}
+    ${allow.clipboard !== false ? '<button class="btn" data-a="clip">В буфер обмена ПК</button>' : ""}
+    ${allow.chat !== false ? '<button class="btn" data-a="chat">Спросить Astra</button>' : ""}
+    <button class="btn" data-a="close">Отмена</button></div></div>`;
+  $("#sheet").onclick = (ev) => { if (ev.target.id === "sheet") $("#layer").innerHTML = ""; };
+  $("#layer").querySelectorAll("[data-a]").forEach((b) => b.onclick = async () => {
+    const a = b.dataset.a;
+    $("#layer").innerHTML = "";
+    try {
+      if (a === "open") { await post("/api/open", { url }); toast("Открыто на ПК"); }
+      if (a === "clip") { await post("/api/clipboard", { text }); toast("Скопировано на ПК"); }
+      if (a === "chat") { tab = "chat"; store.set("tab", tab); render(); sendChat(text); }
+    } catch (err) { toast(err.message); }
+  });
+};
+
+render();
+AR.ready();
+</script>
+</body>
+</html>

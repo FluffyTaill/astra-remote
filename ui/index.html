@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="http://astra-plugin.localhost/bridge/astra-bridge.js"></script>
+<title>Astra Remote</title>
+<style>
+/* Colours come from Astra's theme (the bridge sets them on <html>); the values after the commas are
+   only for a page opened outside Astra. The page is drawn over Astra: no background of its own. */
+:root{font-family:Inter,"Segoe UI",sans-serif;
+  --text:var(--color-text,#e9ecf3);--muted:var(--color-text-muted,#8a93a8);
+  --card:var(--color-surface,#171b24);--raised:var(--color-surface-raised,#1d2230);--hover:var(--color-surface-hover,#20263a);
+  --line:var(--color-border-subtle,#ffffff14);--line2:var(--color-border,#ffffff22);
+  --accent:var(--color-accent,#8b7cff);--accent-soft:var(--color-accent-soft,#8b7cff26);--accent-text:var(--color-accent-text,#b9afff);
+  --on-accent:var(--color-text-on-accent,#fff);
+  --ok:var(--color-success,#2f9e6f);--ok-bg:var(--color-success-bg,#2f9e6f1a);--ok-border:var(--color-success-border,#2f9e6f55);
+  --warn-bg:var(--color-warning-bg,#d8b45a14);--warn-border:var(--color-warning-border,#d8b45a40);
+  --bad:var(--color-danger,#e06a7e);--bad-bg:var(--color-danger-bg,#e06a7e14);--bad-border:var(--color-danger-border,#e06a7e55);
+  --field:var(--color-paper,#0b0e15)}
+body{color-scheme:light dark}
+:root[data-theme="light"] body{color-scheme:light}
+:root[data-theme="dark"] body{color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:transparent;color:var(--text);font-size:14px}
+.wrap{max-width:980px;margin:0 auto;padding:26px 24px 60px}
+h1{font-size:24px;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:14px}
+.card h2{font-size:15px;margin:0 0 4px}
+.card .hint{color:var(--muted);font-size:13px;margin:0 0 12px;line-height:1.45}
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.btn{border:1px solid var(--line2);background:var(--raised);color:var(--text);border-radius:10px;padding:8px 14px;font:inherit;cursor:pointer}
+.btn:hover{background:var(--hover)}
+.btn.primary{background:var(--accent);border-color:transparent;color:var(--on-accent)}
+.btn.danger{color:var(--bad);border-color:var(--bad-border);background:var(--bad-bg)}
+.btn.small{padding:5px 10px;font-size:13px}
+.status{padding:10px 12px;border-radius:10px;font-size:13.5px;border:1px solid}
+.status.ok{background:var(--ok-bg);border-color:var(--ok-border)}
+.status.bad{background:var(--bad-bg);border-color:var(--bad-border)}
+.status.warn{background:var(--warn-bg);border-color:var(--warn-border)}
+.pair{display:grid;grid-template-columns:220px 1fr;gap:20px;align-items:center;margin-top:14px}
+.qr{width:220px;height:220px;border-radius:12px;overflow:hidden;background:#fff}
+.qr svg{width:100%;height:100%;display:block}
+.code{font-size:34px;letter-spacing:.3em;font-weight:700;font-variant-numeric:tabular-nums}
+.mono{font-family:Consolas,monospace;font-size:13px;word-break:break-all;color:var(--accent-text)}
+table{width:100%;border-collapse:collapse}
+td,th{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);font-size:13.5px;vertical-align:middle}
+th{color:var(--muted);font-weight:500;font-size:12.5px}
+tr:last-child td{border-bottom:0}
+input[type=text],select{background:var(--field);border:1px solid var(--line2);color:var(--text);border-radius:8px;padding:6px 9px;font:inherit}
+input.emoji{width:46px;text-align:center}
+input.label{width:100%;min-width:140px}
+.badge{font-size:12px;padding:3px 8px;border-radius:999px;white-space:nowrap}
+.badge.on{background:var(--ok-bg);color:var(--ok)}
+.badge.off{background:var(--raised);color:var(--muted)}
+.muted{color:var(--muted)}
+.log{max-height:240px;overflow:auto}
+.req{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:12px;padding:12px 14px;border-radius:12px;border:1px solid var(--warn-border);background:var(--warn-bg)}
+.req .check{font-size:26px;font-weight:700;letter-spacing:.2em;font-variant-numeric:tabular-nums}
+.toggle{display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:13px}
+.toggle input{accent-color:var(--accent);width:16px;height:16px}
+ol{margin:6px 0 0;padding-left:20px;line-height:1.6;color:var(--muted)}
+ol b{color:var(--text);font-weight:600}
+@media (max-width:640px){.pair{grid-template-columns:1fr}.wrap{padding:18px 14px 40px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Astra Remote</h1>
+  <p class="sub">Управляй этим ПК и говори с Astra из приложения на телефоне: пульт, медиа и громкость, снимок экрана, сон и блокировка.</p>
+
+  <div class="card">
+    <h2>Подключить телефон</h2>
+    <p class="hint">Нужен Android-телефон с приложением <b>Astra Remote</b>, в той же Wi-Fi-сети, что и ПК. Вне дома — через <b>Tailscale</b> на обоих устройствах. Порт в интернет не открывай.</p>
+    <div id="server"></div>
+    <div class="row" style="margin-top:12px" id="pairControls"></div>
+    <div id="pairBox"></div>
+    <div id="requests"></div>
+  </div>
+
+  <div class="card">
+    <h2>Устройства</h2>
+    <p class="hint">У каждого телефона свой ключ. «Отключить» сразу закрывает ему доступ.</p>
+    <div id="devices"></div>
+    <div id="folder"></div>
+  </div>
+
+  <div class="card">
+    <h2>Кнопки на телефоне</h2>
+    <p class="hint">Подпиши кнопку — она появится на телефоне во вкладке «Пульт». Что она делает, решает команда Astra:</p>
+    <ol style="margin:-6px 0 14px">
+      <li>Astra → <b>Команды</b> → создай команду (открыть сайт, запустить программу, сказать фразу…).</li>
+      <li>Триггер команды — <b>«Astra Remote: кнопка N на телефоне»</b>.</li>
+      <li>Нажми «Проверить» здесь: команда должна сработать.</li>
+    </ol>
+    <table><thead><tr><th>№</th><th>Значок</th><th>Подпись</th><th>Команда</th><th></th></tr></thead><tbody id="buttons"></tbody></table>
+  </div>
+
+  <div class="card">
+    <h2>Журнал</h2>
+    <p class="hint">Что делали подключённые телефоны. Текст сообщений в чат не записывается. Полный журнал: <span class="mono">%APPDATA%\astra-remote\actions.log</span></p>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
