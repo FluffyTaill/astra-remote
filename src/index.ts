@@ -11,6 +11,8 @@
 // The plugin page in Astra pairs phones (QR code + "Allow"), names the buttons and lists what the
 // phones did.
 import * as os from "node:os";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { plugin, tool, s } from "astra-plugin-sdk";
 import { createServer, addresses, certFingerprint } from "./server.js";
 import { startRelay } from "./relay.js";
@@ -21,7 +23,7 @@ import { qrSvg } from "./qr.js";
 
 const DEFAULTS = {
   port: 8765, allow_chat: true, allow_screenshot: true, allow_power: true, allow_shutdown: false, confirm_shutdown: true,
-  allow_files: true, shared_folder: "", max_upload_mb: 2048, allow_clipboard: true, allow_open_url: true, allow_input: true, allow_launch: true, key_days: 90,
+  allow_files: true, shared_folder: "", max_upload_mb: 2048, allow_clipboard: true, allow_open_url: true, allow_input: true, allow_launch: true, voice_to_phone: true, voice_quiet_pc: true, key_days: 90,
   keep_awake: false, relay_url: ""
 };
 
@@ -81,11 +83,11 @@ const relayInfo = () => (relay ? { url: relayFor, id: store.relayIdentity().id }
 const NO_GRANT = (what) => `Astra не дала плагину право ${what}. Разрешения выдаются только при установке: в Astra → Мастерская ` +
   "выключи Phone Remote, установи его заново и в окне установки отметь все разрешения.";
 
-async function* chat(text, fresh) {
+async function* chat(text, fresh, aloud = false) {
   if (fresh) conversationId = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      for await (const chunk of ctxRef.sendChatMessage(text, { conversationId })) {
+      for await (const chunk of ctxRef.sendChatMessage(text, { conversationId, voiceEnabled: aloud })) {
         if (chunk.conversationId) conversationId = chunk.conversationId;
         if (chunk.error) {
           yield { error: chunk.error };
@@ -108,6 +110,103 @@ async function* chat(text, fresh) {
   }
 }
 
+// Astra's own voice on the phone. Astra is asked to speak the reply, as she would at the PC, and what
+// her process (the daemon, this plugin's parent, with what it started) plays is recorded and sent with
+// the text. The recording follows her volume on the PC, so she cannot be muted there; if so set, she
+// is turned down to QUIET % for the reply and the recording turned up by as much.
+// Lines: {voice: "start", rate}, the chat's own, {audio: base64 PCM}, and last {voiceEnd, heard, error}.
+let voiceTurn = 0; // the reply whose voice is being recorded: a newer one takes the recorder over
+async function* chatAloud(text, fresh) {
+  const daemon = process.ppid;
+  const turn = ++voiceTurn;
+  try {
+    await pc.voiceStart(daemon);
+  } catch (e) {
+    yield { voiceEnd: true, heard: false, error: e.message || String(e) };
+    yield* chat(text, fresh);
+    return;
+  }
+  yield { voice: "start", rate: pc.VOICE_RATE };
+  const queue = [];
+  let wake = null, chatDone = false;
+  (async () => {
+    try {
+      for await (const c of chat(text, fresh, true)) { queue.push(c); wake?.(); }
+    } catch (e) {
+      queue.push({ error: e.message || String(e) });
+    } finally {
+      chatDone = true;
+      wake?.();
+    }
+  })();
+  const t0 = Date.now();
+  let doneAt = 0, heard = false, lastLoud = 0, error = "";
+  // her volume on the PC before she was turned down (null = left alone)
+  let before = config().voice_quiet_pc ? await quietOnPc(daemon) : null;
+  try {
+    for (;;) {
+      await new Promise((r) => { wake = r; setTimeout(r, 250); });
+      wake = null;
+      if (turn !== voiceTurn) break; // a newer reply has the recorder now
+      while (queue.length) yield queue.shift();
+      if (chatDone && !doneAt) doneAt = Date.now();
+      const r = await pc.voiceRead();
+      if (r.error) { error = r.error; break; }
+      if (r.peak > 400) {
+        lastLoud = Date.now();
+        // no sound session yet when she was to be turned down at the start: now there is one
+        if (!heard && before === null && config().voice_quiet_pc) before = await quietOnPc(daemon);
+        heard = true;
+      }
+      if (heard && r.pcm) yield { audio: r.pcm };
+      const now = Date.now();
+      // she may start speaking a little after the text is done, and pause between sentences
+      if (doneAt && (heard ? now - lastLoud > 1800 : now - doneAt > 12000)) break;
+      if (now - t0 > 180000) break;
+    }
+  } finally {
+    // the newer reply records on, and puts her volume back when it is done
+    if (turn === voiceTurn) {
+      await pc.voiceStop();
+      if (before !== null) await loudAgain(daemon, before);
+    }
+  }
+  yield { voiceEnd: true, heard, error };
+}
+const QUIET = 6; // %: hardly heard in the room, and enough left for a clean voice once turned up
+// The volume to go back to is also kept in a file: a plugin stopped mid-reply puts it back on its next start.
+const QUIET_FILE = path.join(store.DATA_DIR, "voice-volume.json");
+let quietFrom = null; // her volume before a reply turned her down, while she is down
+async function quietOnPc(pid) {
+  if (quietFrom !== null) { // still down from the reply before: the recording is turned up again
+    await pc.voiceGain(100 / QUIET).catch(() => {});
+    return quietFrom;
+  }
+  try {
+    const app = (await pc.appVolumes()).find((x) => x.pid === pid);
+    if (!app || app.muted || app.volume <= QUIET) return null; // already silent or quiet: leave it
+    fs.writeFileSync(QUIET_FILE, JSON.stringify({ pid, volume: app.volume }));
+    await pc.setAppVolume({ pid, volume: QUIET });
+    await pc.voiceGain(100 / QUIET);
+    quietFrom = app.volume;
+    return app.volume;
+  } catch {
+    return null;
+  }
+}
+async function loudAgain(pid, volume) {
+  quietFrom = null;
+  await pc.setAppVolume({ pid, volume }).catch(() => {});
+  try { fs.unlinkSync(QUIET_FILE); } catch {}
+}
+function loudAfterCrash() {
+  try {
+    const { pid, volume } = JSON.parse(fs.readFileSync(QUIET_FILE, "utf8"));
+    if (pid === process.ppid) loudAgain(pid, volume);
+    else fs.unlinkSync(QUIET_FILE);
+  } catch {}
+}
+
 async function startServer() {
   const { port } = config();
   if (server && listening.port === port) return;
@@ -124,7 +223,7 @@ async function startServer() {
     fireButton: (n) => ctxRef.fireTrigger(`button_${n}`, { button: String(n) }).catch((e) => {
       throw e.code === 7 ? new Error(NO_GRANT("запускать команды кнопками")) : e;
     }),
-    chat,
+    chat: (text, fresh, aloud) => (aloud && config().voice_to_phone ? chatAloud(text, fresh) : chat(text, fresh)),
     relay: relayInfo,
     onChange: () => {}
   });
@@ -226,6 +325,7 @@ export const app = plugin({
     ctxRef = ctx;
     store.load();
     pc.warmUp();
+    loudAfterCrash();
     applyKeepAwake();
     awakeTimer = setInterval(applyKeepAwake, 4 * 60 * 1000);
     await startServer();

@@ -145,7 +145,7 @@ export function createServer(deps) {
         allow: {
           screenshot: !!cfg.allow_screenshot, power: !!cfg.allow_power, shutdown: !!cfg.allow_shutdown, chat: !!cfg.allow_chat,
           files: !!cfg.allow_files, clipboard: !!cfg.allow_clipboard, open_url: !!cfg.allow_open_url, confirm: !!cfg.confirm_shutdown,
-          input: !!cfg.allow_input, launch: !!cfg.allow_launch
+          input: !!cfg.allow_input, launch: !!cfg.allow_launch, voice: !!cfg.voice_to_phone
         }
       };
     },
@@ -359,7 +359,7 @@ export function createServer(deps) {
         let closed = false;
         res.on("close", () => { closed = true; });
         try {
-          for await (const chunk of deps.chat(text, !!body.fresh)) {
+          for await (const chunk of deps.chat(text, !!body.fresh, !!body.voice)) {
             if (closed) break;
             res.write(JSON.stringify(chunk) + "\n");
           }

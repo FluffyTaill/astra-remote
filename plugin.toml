@@ -1,7 +1,7 @@
 [plugin]
 id = "phone-remote"
 name = "Phone Remote"
-version = "0.6.4"
+version = "0.7.0"
 description = "Control this PC and talk to Astra from an Android app: a remote with your Astra commands, music and volume, files and clipboard, screenshots, your avatar with voice, and sleep or lock. Works from anywhere through your own free Cloudflare relay."
 author = "Taill"
 license = "MIT"
@@ -93,6 +93,18 @@ schema = """
       "default": true,
       "title": "Запуск программ и игр",
       "description": "Телефон видит ярлыки из меню «Пуск» и с рабочего стола и игры Steam и может их запустить. Ничего другого он запустить не может."
+    },
+    "voice_to_phone": {
+      "type": "boolean",
+      "default": true,
+      "title": "Голос Astra на телефоне",
+      "description": "Когда в приложении включена озвучка, Astra проговаривает ответ своим голосом, и он идёт на телефон. Нужна Windows 10 2004 или новее; иначе ответ читает голос телефона."
+    },
+    "voice_quiet_pc": {
+      "type": "boolean",
+      "default": true,
+      "title": "Тихо на ПК, пока голос идёт на телефон",
+      "description": "На время ответа громкость Astra на ПК — 6%, её почти не слышно; на телефон голос идёт в полную силу. Совсем выключить звук на ПК нельзя: тогда тише стал бы и голос на телефоне."
     },
     "allow_screenshot": {
       "type": "boolean",

@@ -128,6 +128,7 @@ public final class MainActivity extends Activity {
         web = new WebView(this);
         web.setBackgroundColor(BG);
         WebSettings s = web.getSettings();
+        s.setMediaPlaybackRequiresUserGesture(false); // Astra's voice starts when her reply comes, not on a tap
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setAllowFileAccess(false); // file:///android_asset/ still loads; nothing else on the phone does

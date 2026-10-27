@@ -433,6 +433,12 @@ final class Bridge {
     /** A chat message; the reply comes as __chat(id, jsonLine) per line and __chat(id, null) at the end. */
     @JavascriptInterface
     public void chat(final String id, final String text, final boolean fresh) {
+        chat(id, text, fresh, false);
+    }
+
+    /** The same, asking for Astra's own voice: {"audio": …} lines come with the reply (see __chat). */
+    @JavascriptInterface
+    public void chat(final String id, final String text, final boolean fresh, final boolean voice) {
         final Pinned n = net;
         final Vault.Pairing p = pairing;
         if (n == null || p == null) {
@@ -445,6 +451,7 @@ final class Bridge {
                 JSONObject b = new JSONObject();
                 b.put("text", text);
                 b.put("fresh", fresh);
+                if (voice) b.put("voice", true);
                 c = n.connect("POST", "/api/chat", p.token, b.toString().getBytes(StandardCharsets.UTF_8), 10 * 60 * 1000);
                 chatConn = c;
                 rememberHost();

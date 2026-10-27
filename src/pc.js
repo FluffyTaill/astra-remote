@@ -20,6 +20,7 @@ using System.Diagnostics;
 using System.Collections.Generic;
 using System.Runtime.InteropServices.ComTypes;
 using System.Globalization;
+using System.Threading;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Drawing.Drawing2D;
@@ -340,6 +341,148 @@ public static class AR {
     return b.ToString();
   }
 }
+
+// Recording what one process (and the processes it started) plays: Windows' process loopback
+// (Windows 10 2004 and later). Runs on a thread of its own and keeps what it heard until it is read.
+[ComImport, Guid("41D949AB-9862-444A-80F6-C261334DA5EB"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IActivateAudioInterfaceCompletionHandler { void ActivateCompleted(IActivateAudioInterfaceAsyncOperation op); }
+[ComImport, Guid("72A22D78-CDE4-431D-B8CC-843A71199B6D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IActivateAudioInterfaceAsyncOperation { void GetActivateResult(out int hr, [MarshalAs(UnmanagedType.IUnknown)] out object iface); }
+[ComImport, Guid("94ea2b94-e9cc-49e0-c0ff-ee64ca8f5b90"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAgileObject { }
+[ComImport, Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioClientX {
+  [PreserveSig] int Initialize(int shareMode, uint flags, long bufferDuration, long periodicity, IntPtr format, IntPtr session);
+  [PreserveSig] int GetBufferSize(out uint n);
+  [PreserveSig] int GetStreamLatency(out long l);
+  [PreserveSig] int GetCurrentPadding(out uint p);
+  [PreserveSig] int IsFormatSupported(int mode, IntPtr format, IntPtr closest);
+  [PreserveSig] int GetMixFormat(out IntPtr format);
+  [PreserveSig] int GetDevicePeriod(out long def, out long min);
+  [PreserveSig] int Start();
+  [PreserveSig] int Stop();
+  [PreserveSig] int Reset();
+  [PreserveSig] int SetEventHandle(IntPtr h);
+  [PreserveSig] int GetService(ref Guid riid, [MarshalAs(UnmanagedType.IUnknown)] out object o);
+}
+[ComImport, Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IAudioCaptureClientX {
+  [PreserveSig] int GetBuffer(out IntPtr data, out uint frames, out uint flags, out ulong pos, out ulong qpc);
+  [PreserveSig] int ReleaseBuffer(uint frames);
+  [PreserveSig] int GetNextPacketSize(out uint frames);
+}
+
+public class LoopbackDone : IActivateAudioInterfaceCompletionHandler, IAgileObject {
+  public readonly ManualResetEvent Done = new ManualResetEvent(false);
+  public void ActivateCompleted(IActivateAudioInterfaceAsyncOperation op) { Done.Set(); }
+}
+
+public static class Voice {
+  [DllImport("Mmdevapi.dll", ExactSpelling = true)]
+  static extern int ActivateAudioInterfaceAsync([MarshalAs(UnmanagedType.LPWStr)] string path, ref Guid riid, IntPtr prop,
+    IActivateAudioInterfaceCompletionHandler handler, out IActivateAudioInterfaceAsyncOperation op);
+
+  public const int RATE = 24000; // mono, 16 bit: plenty for a voice, 48 KB a second
+  static Thread thread;
+  static volatile bool running;
+  static readonly object gate = new object();
+  static MemoryStream heard = new MemoryStream();
+  static string error = "";
+  // The recording follows the app's volume on the PC (muted = silence). Turned down there so the
+  // room does not hear her, it is turned up here by as much.
+  static volatile float gain = 1;
+  public static void Gain(double g) { gain = (float)Math.Max(1, Math.Min(40, g)); }
+
+  public static void Start(int pid) {
+    Stop();
+    lock (gate) { heard.SetLength(0); error = ""; }
+    gain = 1;
+    running = true;
+    thread = new Thread(() => Run(pid)) { IsBackground = true };
+    thread.SetApartmentState(ApartmentState.MTA);
+    thread.Start();
+  }
+  public static void Stop() {
+    running = false;
+    if (thread != null) thread.Join(2000);
+    thread = null;
+  }
+  // what was heard since the last read: base64 PCM, its loudest sample (0..32767) and any error
+  public static string Read() {
+    byte[] b; string e;
+    lock (gate) { b = heard.ToArray(); heard.SetLength(0); e = error; }
+    int peak = 0;
+    float k = gain;
+    for (int i = 0; i + 1 < b.Length; i += 2) {
+      int v = (short)(b[i] | (b[i + 1] << 8));
+      if (k != 1) { v = (int)Math.Max(-32768, Math.Min(32767, v * k)); b[i] = (byte)v; b[i + 1] = (byte)(v >> 8); }
+      if (Math.Abs(v) > peak) peak = Math.Abs(v);
+    }
+    return "{\"pcm\":\"" + Convert.ToBase64String(b) + "\",\"peak\":" + peak + ",\"error\":\"" + e.Replace("\\", "/").Replace("\"", "'") + "\"}";
+  }
+
+  static void Run(int pid) {
+    IntPtr prop = IntPtr.Zero, args = IntPtr.Zero, fmt = IntPtr.Zero;
+    try {
+      // AUDIOCLIENT_ACTIVATION_PARAMS: process loopback (1) of this process and its children (mode 0)
+      args = Marshal.AllocHGlobal(12);
+      Marshal.WriteInt32(args, 0, 1);
+      Marshal.WriteInt32(args, 4, pid);
+      Marshal.WriteInt32(args, 8, 0);
+      // a PROPVARIANT holding it as a BLOB (VT_BLOB = 65)
+      prop = Marshal.AllocHGlobal(24);
+      for (int i = 0; i < 24; i++) Marshal.WriteByte(prop, i, 0);
+      Marshal.WriteInt16(prop, 0, 65);
+      Marshal.WriteInt32(prop, 8, 12);
+      Marshal.WriteIntPtr(prop, IntPtr.Size == 8 ? 16 : 12, args);
+      var iid = new Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2");
+      var done = new LoopbackDone();
+      IActivateAudioInterfaceAsyncOperation op;
+      Marshal.ThrowExceptionForHR(ActivateAudioInterfaceAsync("VAD\\Process_Loopback", ref iid, prop, done, out op));
+      if (!done.Done.WaitOne(5000)) throw new Exception("activation timed out");
+      int hr; object o;
+      op.GetActivateResult(out hr, out o);
+      Marshal.ThrowExceptionForHR(hr);
+      var client = (IAudioClientX)o;
+      // WAVEFORMATEX: PCM, mono, RATE, 16 bit
+      fmt = Marshal.AllocHGlobal(18);
+      Marshal.WriteInt16(fmt, 0, 1); Marshal.WriteInt16(fmt, 2, 1); Marshal.WriteInt32(fmt, 4, RATE);
+      Marshal.WriteInt32(fmt, 8, RATE * 2); Marshal.WriteInt16(fmt, 12, 2); Marshal.WriteInt16(fmt, 14, 16); Marshal.WriteInt16(fmt, 16, 0);
+      // loopback | event callback | convert to our format
+      Marshal.ThrowExceptionForHR(client.Initialize(0, 0x00020000u | 0x00040000u | 0x80000000u | 0x08000000u, 2000000, 0, fmt, IntPtr.Zero));
+      var ready = new AutoResetEvent(false);
+      Marshal.ThrowExceptionForHR(client.SetEventHandle(ready.SafeWaitHandle.DangerousGetHandle()));
+      var cid = new Guid("C8ADBD64-E71E-48a0-A4DE-185C395CD317");
+      object co;
+      Marshal.ThrowExceptionForHR(client.GetService(ref cid, out co));
+      var capture = (IAudioCaptureClientX)co;
+      Marshal.ThrowExceptionForHR(client.Start());
+      var chunk = new byte[RATE * 2];
+      while (running) {
+        ready.WaitOne(100);
+        uint next;
+        while (capture.GetNextPacketSize(out next) == 0 && next > 0) {
+          IntPtr data; uint frames, flags; ulong pos, qpc;
+          if (capture.GetBuffer(out data, out frames, out flags, out pos, out qpc) != 0) break;
+          int n = (int)frames * 2;
+          if (chunk.Length < n) chunk = new byte[n];
+          if ((flags & 2) != 0) Array.Clear(chunk, 0, n); else Marshal.Copy(data, chunk, 0, n);
+          capture.ReleaseBuffer(frames);
+          lock (gate) { if (heard.Length < 30 * RATE * 2) heard.Write(chunk, 0, n); }
+        }
+      }
+      client.Stop();
+      Marshal.ReleaseComObject(capture);
+      Marshal.ReleaseComObject(client);
+    } catch (Exception e) {
+      lock (gate) error = e.Message;
+    } finally {
+      if (fmt != IntPtr.Zero) Marshal.FreeHGlobal(fmt);
+      if (prop != IntPtr.Zero) Marshal.FreeHGlobal(prop);
+      if (args != IntPtr.Zero) Marshal.FreeHGlobal(args);
+    }
+  }
+}
 `;
 
 // The DLL is named after the hash of its source, so a new version of the plugin compiles its own.
@@ -482,6 +625,7 @@ function makeWorker() {
 const main = makeWorker();
 const pointer = makeWorker();
 const viewer = makeWorker();
+const listener = makeWorker(); // records Astra's voice for the phone (Voice in the helper keeps its own thread)
 const ps = main.ps;
 
 // the PowerShell workers go with the plugin, however it ends
@@ -491,6 +635,7 @@ export function stopWorker() {
   main.stop();
   pointer.stop();
   viewer.stop();
+  listener.stop();
 }
 
 // Start the worker (and compile the helper) ahead of the first request.
@@ -570,6 +715,24 @@ export async function input(events) {
 // One frame of the touchpad's live view (see Live in the helper), as an object.
 export async function liveFrame({ screen = -1, width = 960, zoom = 1, quality = 60 } = {}) {
   return JSON.parse(await viewer.ps(`[AR]::Live(${int(screen, -1, 8, -1)}, ${int(width, 320, 1920, 960)}, ${int(quality, 30, 90, 60)}, ${int(zoom, 1, 4, 1)})`, 15000));
+}
+
+// ── Astra's voice for the phone ─────────────────────────────────────────────
+// What a process and the ones it started play, recorded as 24 kHz 16-bit mono PCM (Windows 10 2004+).
+// The recording follows the process's volume on the PC: muted there is silent here, quieter is quieter.
+export const VOICE_RATE = 24000;
+export async function voiceStart(pid) {
+  await listener.ps(`[Voice]::Start(${int(pid, 1, 1 << 30, 1)})`, 120000);
+}
+// { pcm: base64, peak: 0..32767, error }
+export async function voiceRead() {
+  return JSON.parse(await listener.ps("[Voice]::Read()", 10000));
+}
+export async function voiceGain(g) {
+  await listener.ps(`[Voice]::Gain(${Math.max(1, Math.min(40, Number(g) || 1)).toFixed(3)})`, 10000);
+}
+export async function voiceStop() {
+  await listener.ps("[Voice]::Stop()", 10000).catch(() => {});
 }
 
 // Pictures from files (Steam's game art) and icons of shortcuts, through the main worker.

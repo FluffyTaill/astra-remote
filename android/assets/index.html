@@ -902,13 +902,13 @@ function renderChat(main) {
     <div class="msgs" id="msgs"></div>
     <div class="compose"><button class="send ghost" id="mic" aria-label="Сказать">${ICON.mic}</button><textarea id="text" rows="1" placeholder="Напиши Astra…"></textarea><button class="send" id="send" aria-label="Отправить">${streaming ? ICON.stop : ICON.send}</button></div>
   </div>`;
-  $("#mic").onclick = () => { buzz(); AR.stopSpeaking(); AR.listen(); };
+  $("#mic").onclick = () => { buzz(); AR.stopSpeaking(); voiceStop(); AR.listen(); };
   if ($("#spk")) $("#spk").onclick = () => {
     const on = !store.get("speak", false);
     store.set("speak", on);
     $("#spk").classList.toggle("on", on);
     $("#spk").innerHTML = on ? ICON.sound : ICON.soundOff;
-    if (!on) AR.stopSpeaking();
+    if (!on) { AR.stopSpeaking(); voiceStop(); }
     toast(on ? "Ответы будут звучать вслух" : "Ответы без звука");
   };
   if (showAvatar) mountAvatar();
@@ -1007,6 +1007,44 @@ window.__heard = (e) => {
   if (e.text) { if (tab !== "chat") { tab = "chat"; store.set("tab", tab); render(); } sendChat(e.text); }
 };
 
+// ── Astra's own voice ───────────────────────────────────────────────────────
+// With the speaker on, the PC records Astra speaking the reply and sends it along as 24 kHz 16-bit mono
+// PCM; it is played here, piece after piece, and her mouth moves while it plays. When none comes (an
+// older plugin, an older Windows, or Astra did not speak), the phone's own voice reads the reply.
+const voice = { ctx: null, at: 0, sources: [], on: false, chat: "" }; // chat: the reply whose voice plays
+function voicePlay(b64, rate) {
+  if (!voice.ctx) voice.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const ctx = voice.ctx;
+  if (ctx.state === "suspended") ctx.resume();
+  const bin = atob(b64);
+  const n = bin.length >> 1;
+  if (!n) return;
+  const buf = ctx.createBuffer(1, n, rate || 24000);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) {
+    const v = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8);
+    ch[i] = (v >= 32768 ? v - 65536 : v) / 32768;
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  src.connect(ctx.destination);
+  // a little ahead, so the next piece is there before this one ends
+  const at = Math.max(ctx.currentTime + 0.15, voice.at);
+  src.start(at);
+  voice.at = at + buf.duration;
+  voice.sources.push(src);
+  src.onended = () => { voice.sources = voice.sources.filter((x) => x !== src); };
+}
+function voiceStop() {
+  for (const x of voice.sources) { try { x.stop(); } catch {} }
+  voice.sources = [];
+  voice.at = 0;
+}
+setInterval(() => {
+  const on = !!voice.ctx && voice.ctx.currentTime < voice.at;
+  if (on !== voice.on) { voice.on = on; window.__speaking(on); }
+}, 100);
+
 async function sendChat(given) {
   const ta = $("#text");
   const text = (given ?? ta?.value ?? "").trim();
@@ -1015,27 +1053,42 @@ async function sendChat(given) {
   chatLog.push({ role: "me", text });
   streaming = { text: "" };
   AR.stopSpeaking();
-  av?.setTalking(!store.get("speak", false)); // spoken replies move her mouth themselves (__speaking)
+  voiceStop();
+  const aloud = store.get("speak", false);
+  // the AudioContext wants to be made while the user's tap is still on
+  if (aloud && !voice.ctx) { try { voice.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch {} }
+  av?.setTalking(!aloud); // spoken replies move her mouth themselves (__speaking)
   if ($("#send")) $("#send").innerHTML = ICON.stop;
   paintMsgs();
   const fresh = store.get("fresh", false);
   store.del("fresh");
-  let error = "";
-  await new Promise((end) => {
+  let error = "", rate = 24000, voiceHeard = false;
+  const id0 = String(seq + 1); // this reply's id (set just below)
+  // the text is done at "done"; her voice may keep coming after it, until the stream ends
+  let textDone;
+  const textEnded = new Promise((r) => { textDone = r; });
+  const streamEnded = new Promise((end) => {
     const id = String(++seq);
+    voice.chat = id;
     chats.set(id, {
       chunk: (c) => {
-        if (c.text) { streaming.text += c.text; paintMsgs(); }
+        if (c.text && streaming) { streaming.text += c.text; paintMsgs(); }
         if (c.error) error = c.error;
+        if (c.done) textDone();
+        if (c.voice === "start") rate = c.rate || rate;
+        if (c.audio && voice.chat === id && store.get("speak", false)) { voiceHeard = true; voicePlay(c.audio, rate); }
+        if (c.voiceEnd && c.heard) voiceHeard = true;
       },
-      end
+      end: () => { textDone(); end(); }
     });
-    AR.chat(id, text, !!fresh);
+    try { AR.chat(id, text, !!fresh, !!aloud); } catch { AR.chat(id, text, !!fresh); }
   });
+  await textEnded;
   const reply = streaming.text;
-  if (!store.get("speak", false) || !reply) av?.setTalking(false);
+  if (!aloud || !reply) av?.setTalking(false);
+  // no voice from the PC: the phone reads the reply once the stream is over
+  if (aloud && reply) streamEnded.then(() => { if (!voiceHeard && voice.chat === id0 && store.get("speak", false)) AR.speak(reply); });
   if (reply) {
-    if (store.get("speak", false)) AR.speak(reply);
     const mood = moodOf(reply);
     if (mood) { av?.setMood(mood, 5); playSome(mood === "happy" ? HAPPY_CLIPS : SAD_CLIPS); }
   }
