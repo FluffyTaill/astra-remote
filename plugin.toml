@@ -1,7 +1,7 @@
 [plugin]
 id = "phone-remote"
 name = "Astra Remote"
-version = "0.5.0"
+version = "0.5.1"
 description = "Control this PC and talk to Astra from an Android app: a remote with your Astra commands, music and volume, files and clipboard, screenshots, your avatar with voice, and sleep or lock. Works from anywhere through your own free Cloudflare relay."
 author = "Taill"
 license = "MIT"

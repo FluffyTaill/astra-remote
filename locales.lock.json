@@ -1,0 +1,10 @@
+{
+  "locales": {
+    "ru": {
+      "listing.description": "fb77886ba0c8",
+      "listing.name": "3584aa81b60c"
+    }
+  },
+  "schema": "astra.plugin.locales/1",
+  "source": "en"
+}
