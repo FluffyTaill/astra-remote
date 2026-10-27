@@ -76,6 +76,11 @@ function applyRelay() {
 // what the phone needs to come through it: the relay and this PC's id on it (no secret: the TLS pin is the check)
 const relayInfo = () => (relay ? { url: relayFor, id: store.relayIdentity().id } : null);
 
+// Astra grants a plugin's permissions only when the user ticks them in the install dialog; an
+// install where they were left unticked runs with none, and Astra refuses the call (code 7).
+const NO_GRANT = (what) => `Astra не дала плагину право ${what}. Разрешения выдаются только при установке: в Astra → Мастерская ` +
+  "выключи Phone Remote, установи его заново и в окне установки отметь все разрешения.";
+
 async function* chat(text, fresh) {
   if (fresh) conversationId = "";
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -97,7 +102,7 @@ async function* chat(text, fresh) {
         conversationId = "";
         continue;
       }
-      if (e.code === 7) throw new Error("Astra не разрешила плагину писать в чат: выдай разрешение «Отправка сообщений в чат» в настройках плагина");
+      if (e.code === 7) throw new Error(NO_GRANT("писать в чат"));
       throw e;
     }
   }
@@ -116,7 +121,9 @@ async function startServer() {
   }
   const s = createServer({
     config,
-    fireButton: (n) => ctxRef.fireTrigger(`button_${n}`, { button: String(n) }),
+    fireButton: (n) => ctxRef.fireTrigger(`button_${n}`, { button: String(n) }).catch((e) => {
+      throw e.code === 7 ? new Error(NO_GRANT("запускать команды кнопками")) : e;
+    }),
     chat,
     relay: relayInfo,
     onChange: () => {}
