@@ -13,9 +13,14 @@ const toml = fs.readFileSync(path.join(root, "plugin.toml"), "utf8");
 const field = (name) => toml.match(new RegExp("^" + name + String.raw`\s*=\s*"([^"]*)"`, "m"))[1];
 const id = field("id"), version = field("version");
 
+// ws tries the native speedups bufferutil and utf-8-validate inside try/catch. Point them at a module that
+// throws on load, so ws takes its JS fallback and dist/index.js resolves nothing at run time.
+const optionalNative = path.join(root, "src/optional-native.js");
+
 esbuild.buildSync({
   entryPoints: [path.join(root, "src/index.ts")], bundle: true, platform: "node", format: "cjs", target: "node20",
-  outfile: path.join(root, "dist/index.js"), loader: { ".html": "text", ".svg": "text" }, legalComments: "eof", logLevel: "warning"
+  outfile: path.join(root, "dist/index.js"), loader: { ".html": "text", ".svg": "text" }, legalComments: "eof", logLevel: "warning",
+  alias: { bufferutil: optionalNative, "utf-8-validate": optionalNative }
 });
 
 // [permissions] → { name: { reason } }; the hash is sha256 of compact JSON with sorted keys
