@@ -13,6 +13,7 @@ import * as store from "./store.js";
 import * as files from "./files.js";
 import { relayedIp } from "./relay.js";
 import * as avatar from "./avatar.js";
+import * as apps from "./apps.js";
 
 const MAX_BODY = 128 * 1024; // JSON only; files stream past this
 
@@ -123,6 +124,7 @@ export function createServer(deps) {
   const need = (flag, message) => {
     if (!deps.config()[flag]) throw httpError(403, message);
   };
+  const inputLogged = new Map(); // device → when its touchpad use was last written to the log
   const routes = {
     "GET /api/state": async (_b, dev) => {
       const cfg = deps.config();
@@ -141,7 +143,8 @@ export function createServer(deps) {
         relay: deps.relay?.() || null,
         allow: {
           screenshot: !!cfg.allow_screenshot, power: !!cfg.allow_power, shutdown: !!cfg.allow_shutdown, chat: !!cfg.allow_chat,
-          files: !!cfg.allow_files, clipboard: !!cfg.allow_clipboard, open_url: !!cfg.allow_open_url, confirm: !!cfg.confirm_shutdown
+          files: !!cfg.allow_files, clipboard: !!cfg.allow_clipboard, open_url: !!cfg.allow_open_url, confirm: !!cfg.confirm_shutdown,
+          input: !!cfg.allow_input, launch: !!cfg.allow_launch
         }
       };
     },
@@ -151,6 +154,34 @@ export function createServer(deps) {
       return { ok: true };
     },
     "POST /api/volume": async (body) => pc.setVolume(body),
+    // the cover of what plays (the app asks again when the track changes) and moving through it
+    "GET /api/media/cover": async () => ({ cover: await pc.cover().catch(() => null) }),
+    "POST /api/media/seek": async (body) => {
+      await pc.seek(body.sec);
+      return { ok: true };
+    },
+    // each app's own volume
+    "GET /api/volume/apps": async () => ({ apps: await pc.appVolumes() }),
+    "POST /api/volume/app": async (body) => ({ apps: await pc.setAppVolume(body) }),
+    // the touchpad and the keyboard: a batch of events, logged once per session of use
+    "POST /api/input": async (body, dev) => {
+      need("allow_input", "Тачпад и клавиатура выключены в настройках плагина");
+      await pc.input(body.events);
+      if (Date.now() - (inputLogged.get(dev.id) || 0) > 600000) store.logAction(dev, "тачпад и клавиатура");
+      inputLogged.set(dev.id, Date.now());
+      return { ok: true };
+    },
+    // the launcher: the phone sees names and ids, never paths
+    "GET /api/apps": async () => {
+      need("allow_launch", "Запуск программ выключен в настройках плагина");
+      return { apps: await apps.list() };
+    },
+    "POST /api/apps/launch": async (body, dev) => {
+      need("allow_launch", "Запуск программ выключен в настройках плагина");
+      const name = await apps.launch(body.id);
+      store.logAction(dev, "запустил " + name);
+      return { ok: true };
+    },
     "POST /api/button": async (body, dev) => {
       const b = store.buttons().find((x) => x.n === Number(body.n));
       if (!b || !b.label) throw httpError(404, "Нет такой кнопки");
@@ -240,7 +271,7 @@ export function createServer(deps) {
         const r = store.requestPairing(String(body.secret || ""), body.name, ip);
         if (r.error === "bad_secret") {
           fail(ip);
-          return send(res, 403, { error: "QR-код устарел. Открой Astra Remote в Astra на ПК и нажми «Подключить телефон» ещё раз" });
+          return send(res, 403, { error: "QR-код устарел. Открой Phone Remote в Astra на ПК и нажми «Подключить телефон» ещё раз" });
         }
         if (r.error) return send(res, 429, { error: "Слишком много запросов на подключение" });
         deps.onChange();
@@ -268,7 +299,7 @@ export function createServer(deps) {
         deps.onChange();
         return send(res, 401, { error: "Срок ключа этого телефона истёк. Подключи его заново по QR-коду" });
       }
-      if (!allow(dev.id)) return send(res, 429, { error: "Слишком часто" });
+      if (!allow(key === "POST /api/input" ? "input:" + dev.id : dev.id)) return send(res, 429, { error: "Слишком часто" });
 
       if (key === "GET /api/screenshot") {
         if (!deps.config().allow_screenshot) return send(res, 403, { error: "Снимок экрана выключен в настройках плагина" });

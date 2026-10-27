@@ -1,4 +1,4 @@
-// Astra Remote page. Talks to the plugin through window.astra.callBackend(method, params) and polls
+// Phone Remote page. Talks to the plugin through window.astra.callBackend(method, params) and polls
 // getState every couple of seconds, so a phone asking to pair shows up here without a reload.
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -155,7 +155,7 @@ function paintPair() {
   const box = $("#pairBox");
   if (!qr || !state.pairing) return setHtml(box, "");
   setHtml(box, `<div class="pair"><div class="qr">${qr}</div><div>
-      <p style="margin:0 0 8px">В приложении <b>Astra Remote</b> на телефоне нажми «Сканировать QR-код» и наведи камеру сюда.</p>
+      <p style="margin:0 0 8px">В приложении <b>Phone Remote</b> на телефоне нажми «Сканировать QR-код» и наведи камеру сюда.</p>
       <p class="muted" style="margin:0 0 8px">Затем здесь появится запрос с кодом из 4 цифр — разреши его, только если такой же код на экране твоего телефона.</p>
       <p class="muted" style="margin:0">QR-код действует ещё <span id="left"></span> и подходит для одного телефона.</p>
     </div></div>`);

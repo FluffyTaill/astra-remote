@@ -1,7 +1,7 @@
 [plugin]
 id = "phone-remote"
-name = "Astra Remote"
-version = "0.5.2"
+name = "Phone Remote"
+version = "0.6.0"
 description = "Control this PC and talk to Astra from an Android app: a remote with your Astra commands, music and volume, files and clipboard, screenshots, your avatar with voice, and sleep or lock. Works from anywhere through your own free Cloudflare relay."
 author = "Taill"
 license = "MIT"
@@ -80,7 +80,19 @@ schema = """
       "type": "boolean",
       "default": true,
       "title": "Открывать ссылки с телефона",
-      "description": "«Поделиться» → Astra Remote → ссылка открывается в браузере на ПК. Только http и https."
+      "description": "«Поделиться» → Phone Remote → ссылка открывается в браузере на ПК. Только http и https."
+    },
+    "allow_input": {
+      "type": "boolean",
+      "default": true,
+      "title": "Тачпад и клавиатура",
+      "description": "Телефон водит мышью и печатает на ПК. Окна, запущенные от администратора, Windows с телефона не пускает."
+    },
+    "allow_launch": {
+      "type": "boolean",
+      "default": true,
+      "title": "Запуск программ и игр",
+      "description": "Телефон видит ярлыки из меню «Пуск» и с рабочего стола и игры Steam и может их запустить. Ничего другого он запустить не может."
     },
     "allow_screenshot": {
       "type": "boolean",
@@ -122,4 +134,4 @@ target = "noarch"
 [permissions]
 client = { reason = "The phone app is a chat with Astra: what you type or say on the phone goes to Astra as if you typed it here." }
 send_chat_message = { reason = "Sends your messages from the phone to Astra and streams her reply back to the phone." }
-fire_trigger = { reason = "The buttons on the phone run the Astra commands you hang on the \"Astra Remote: button N\" triggers." }
+fire_trigger = { reason = "The buttons on the phone run the Astra commands you hang on the \"Phone Remote: button N\" triggers." }

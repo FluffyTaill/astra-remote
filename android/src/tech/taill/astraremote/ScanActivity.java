@@ -72,7 +72,7 @@ public final class ScanActivity extends Activity implements TextureView.SurfaceT
         root.addView(frame, fl);
 
         hint = new TextView(this);
-        hint.setText("Наведи камеру на QR-код на странице Astra Remote в Astra");
+        hint.setText("Наведи камеру на QR-код на странице Phone Remote в Astra");
         hint.setTextColor(Color.WHITE);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
         hint.setGravity(Gravity.CENTER);
@@ -120,7 +120,7 @@ public final class ScanActivity extends Activity implements TextureView.SurfaceT
         if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
             if (view.isAvailable()) open();
         } else {
-            hint.setText("Без доступа к камере QR-код не прочитать. Разреши камеру в настройках Android → Приложения → Astra Remote");
+            hint.setText("Без доступа к камере QR-код не прочитать. Разреши камеру в настройках Android → Приложения → Phone Remote");
         }
     }
 
@@ -226,7 +226,7 @@ public final class ScanActivity extends Activity implements TextureView.SurfaceT
     private void onFound(String text) {
         if (done) return;
         if (!text.startsWith("astraremote://pair?")) {
-            hint.setText("Это другой QR-код. Нужен код со страницы Astra Remote в Astra на ПК");
+            hint.setText("Это другой QR-код. Нужен код со страницы Phone Remote в Astra на ПК");
             return;
         }
         done = true;

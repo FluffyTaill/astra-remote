@@ -506,7 +506,7 @@ final class Bridge {
     static Draft parseQr(String text) {
         Uri u = Uri.parse(text == null ? "" : text.trim());
         if (!"astraremote".equals(u.getScheme()) || !"pair".equals(u.getHost())) {
-            throw new IllegalArgumentException("Это не QR-код Astra Remote");
+            throw new IllegalArgumentException("Это не QR-код Phone Remote");
         }
         if (!"1".equals(u.getQueryParameter("v"))) {
             throw new IllegalArgumentException("QR-код от другой версии плагина — обнови приложение");
@@ -697,7 +697,7 @@ final class Bridge {
     public void writeClipboard(final String text) {
         ui.post(() -> {
             ClipboardManager cm = activity.getSystemService(ClipboardManager.class);
-            if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("Astra Remote", text == null ? "" : text));
+            if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("Phone Remote", text == null ? "" : text));
         });
     }
 

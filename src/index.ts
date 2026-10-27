@@ -1,12 +1,12 @@
 // @ts-nocheck — plain JavaScript in a .ts file: esbuild bundles it, nothing here is type-checked.
-// Astra Remote — control this PC and talk to Astra from the Astra Remote phone app.
+// Phone Remote — control this PC and talk to Astra from the Phone Remote phone app.
 //
 // The plugin is the bridge: Astra opens nothing to the network, and a plugin's token is good only for
 // PluginHostService, so the plugin itself serves the app (src/server.js) and does the PC side
 // (src/pc.js). From Astra it uses:
 //   * SendChatMessage — the app's chat is a conversation with Astra;
 //   * FireTrigger — buttons 1…12 in the app are this plugin's triggers; whatever Astra command the
-//     user hangs on "Astra Remote: button N" runs on a tap;
+//     user hangs on "Phone Remote: button N" runs on a tap;
 //   * tools — Astra can send a file or folder to the phone and see what the phone sent (src/files.js).
 // The plugin page in Astra pairs phones (QR code + "Allow"), names the buttons and lists what the
 // phones did.
@@ -21,7 +21,7 @@ import { qrSvg } from "./qr.js";
 
 const DEFAULTS = {
   port: 8765, allow_chat: true, allow_screenshot: true, allow_power: true, allow_shutdown: false, confirm_shutdown: true,
-  allow_files: true, shared_folder: "", max_upload_mb: 2048, allow_clipboard: true, allow_open_url: true, key_days: 90,
+  allow_files: true, shared_folder: "", max_upload_mb: 2048, allow_clipboard: true, allow_open_url: true, allow_input: true, allow_launch: true, key_days: 90,
   keep_awake: false, relay_url: ""
 };
 
@@ -172,7 +172,7 @@ function pairLink(secret) {
 
 const triggers = {};
 for (let n = 1; n <= store.BUTTON_COUNT; n++) {
-  triggers[`button_${n}`] = { label: `Astra Remote: кнопка ${n} на телефоне`, fields: [] };
+  triggers[`button_${n}`] = { label: `Phone Remote: кнопка ${n} на телефоне`, fields: [] };
 }
 
 export const app = plugin({
@@ -180,34 +180,34 @@ export const app = plugin({
   triggers,
   tools: {
     send_file_to_phone: tool({
-      description: "Send a file or a whole folder from this PC to the user's phone (the Astra Remote app). Use when the user asks to send, share or drop a file to their phone. The file is copied into the Astra Remote shared folder and shows up in the app under Files.",
+      description: "Send a file or a whole folder from this PC to the user's phone (the Phone Remote app). Use when the user asks to send, share or drop a file to their phone. The file is copied into the Phone Remote shared folder and shows up in the app under Files.",
       input: s.object({ path: s.string({ description: "Full path of the file or folder on this PC" }) }),
       run: ({ path: p }) => {
-        if (!config().allow_files) throw new Error("File sharing is turned off in the Astra Remote settings");
-        if (!store.devices().length) throw new Error("No phone is paired with Astra Remote yet");
+        if (!config().allow_files) throw new Error("File sharing is turned off in the Phone Remote settings");
+        if (!store.devices().length) throw new Error("No phone is paired with Phone Remote yet");
         const items = files.offer(config(), p);
         store.addSent(items);
         store.logAction({ name: "Astra" }, `отправила на телефон: ${items.length === 1 ? items[0].name : items.length + " файлов"}`);
-        return `Sent ${items.length} file(s) to the phone: ${items.slice(0, 10).map((x) => x.name).join(", ")}${items.length > 10 ? "…" : ""}. They are in the Astra Remote app under Files.`;
+        return `Sent ${items.length} file(s) to the phone: ${items.slice(0, 10).map((x) => x.name).join(", ")}${items.length > 10 ? "…" : ""}. They are in the Phone Remote app under Files.`;
       }
     }),
     notify_phone: tool({
-      description: "Show a notification on the user's phone (the Astra Remote app). Use when the user asks to be told or reminded of something on their phone, or to get a message there when a task finishes.",
+      description: "Show a notification on the user's phone (the Phone Remote app). Use when the user asks to be told or reminded of something on their phone, or to get a message there when a task finishes.",
       input: s.object({
         text: s.string({ description: "The notification text, short" }),
         title: s.string({ description: "Optional title; default \"Astra\"" }).optional()
       }),
       run: ({ text, title }) => {
-        if (!store.devices().length) throw new Error("No phone is paired with Astra Remote yet");
+        if (!store.devices().length) throw new Error("No phone is paired with Phone Remote yet");
         store.addNote(title || "Astra", text);
         store.logAction({ name: "Astra" }, "уведомление на телефон");
         return "The notification is queued for the phone. It shows as soon as the app checks in (at once while it is open, otherwise within about 15 minutes).";
       }
     }),
     list_phone_uploads: tool({
-      description: "List the files the user recently sent from their phone to this PC with the Astra Remote app (newest first), with full paths, so you can open or work with them.",
+      description: "List the files the user recently sent from their phone to this PC with the Phone Remote app (newest first), with full paths, so you can open or work with them.",
       run: () => {
-        if (!config().allow_files) throw new Error("File sharing is turned off in the Astra Remote settings");
+        if (!config().allow_files) throw new Error("File sharing is turned off in the Phone Remote settings");
         return { folder: files.root(config()), from_phone: files.recentUploads(config()) };
       }
     })
@@ -238,7 +238,7 @@ export const app = plugin({
   },
   ui: {
     contributions: [{
-      id: "astra-remote", slot: "page.custom", label: "Astra Remote",
+      id: "phone-remote", slot: "page.custom", label: "Phone Remote",
       iconSvg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/><path d="M9.5 9.5a3.5 3.5 0 0 1 5 0M8 7.5a6 6 0 0 1 8 0"/></svg>',
       url: "index.html", width: 0, height: 0, transparent: true
     }],

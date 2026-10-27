@@ -58,7 +58,7 @@ public final class ButtonsWidget extends AppWidgetProvider {
         for (int i = 0; i < IDS.length; i++) {
             JSONObject b = list.optJSONObject(i);
             if (b == null) {
-                v.setTextViewText(IDS[i], i == 0 && list.length() == 0 ? "Открой Astra Remote" : "");
+                v.setTextViewText(IDS[i], i == 0 && list.length() == 0 ? "Открой Phone Remote" : "");
                 v.setOnClickPendingIntent(IDS[i], PendingIntent.getActivity(ctx, 100 + i, new Intent(ctx, MainActivity.class), PendingIntent.FLAG_IMMUTABLE));
                 continue;
             }

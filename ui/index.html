@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <script src="http://astra-plugin.localhost/bridge/astra-bridge.js"></script>
-<title>Astra Remote</title>
+<title>Phone Remote</title>
 <style>
 /* Colours come from Astra's theme (the bridge sets them on <html>); the values after the commas are
    only for a page opened outside Astra. The page is drawn over Astra: no background of its own. */
@@ -67,12 +67,12 @@ ol b{color:var(--text);font-weight:600}
 </head>
 <body>
 <div class="wrap">
-  <h1>Astra Remote</h1>
+  <h1>Phone Remote</h1>
   <p class="sub">Управляй этим ПК и говори с Astra из приложения на телефоне: пульт, медиа и громкость, снимок экрана, сон и блокировка.</p>
 
   <div class="card">
     <h2>Подключить телефон</h2>
-    <p class="hint">Нужен Android-телефон с приложением <b>Astra Remote</b>. Подключать его в первый раз — в той же Wi-Fi-сети, что и ПК; вне дома он ходит через твой ретранслятор (ниже). Порт в интернет не открывай.</p>
+    <p class="hint">Нужен Android-телефон с приложением <b>Phone Remote</b>. Подключать его в первый раз — в той же Wi-Fi-сети, что и ПК; вне дома он ходит через твой ретранслятор (ниже). Порт в интернет не открывай.</p>
     <div id="server"></div>
     <div class="row" style="margin-top:12px" id="pairControls"></div>
     <div id="pairBox"></div>
@@ -93,7 +93,7 @@ ol b{color:var(--text);font-weight:600}
     <p class="hint">Подпиши кнопку — она появится на телефоне во вкладке «Пульт». Что она делает, решает команда Astra:</p>
     <ol style="margin:-6px 0 14px">
       <li>Astra → <b>Команды</b> → создай команду (открыть сайт, запустить программу, сказать фразу…).</li>
-      <li>Триггер команды — <b>«Astra Remote: кнопка N на телефоне»</b>.</li>
+      <li>Триггер команды — <b>«Phone Remote: кнопка N на телефоне»</b>.</li>
       <li>Нажми «Проверить» здесь: команда должна сработать.</li>
     </ol>
     <table><thead><tr><th>№</th><th>Значок</th><th>Подпись</th><th>Команда</th><th></th></tr></thead><tbody id="buttons"></tbody></table>

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Astra Remote</title>
+<title>Phone Remote</title>
 <style>
 /* Astra's own look: its dark theme, the strawberry accent, Nunito for text and JetBrains Mono for titles */
 @import url(fonts/fonts.css);
@@ -131,6 +131,56 @@ nav .badge{position:absolute;top:4px;left:calc(50% + 6px);min-width:17px;height:
 .stage .tools button{width:36px;height:36px;border-radius:12px;background:rgba(23,24,27,.75);border:1px solid var(--line);display:grid;place-items:center}
 .stage .tools button svg{width:18px;height:18px}
 .stage .tools button.on{color:var(--accent);border-color:rgba(243,139,168,.4)}
+/* now playing: cover and position */
+.np{display:flex;align-items:center;gap:12px}
+.np .nt{min-width:0;flex:1}
+.np .cover{width:56px;height:56px;border-radius:12px;object-fit:cover;background:var(--raised);flex:none;display:grid;place-items:center;color:var(--faint)}
+.np .cover svg{width:24px;height:24px}
+.seek{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+.seek input{flex:1;accent-color:var(--accent);height:24px}
+.seek span{font:600 12px var(--mono);color:var(--muted);width:46px;font-variant-numeric:tabular-nums}
+.seek span:last-child{text-align:right}
+.grid.two{grid-template-columns:1fr 1fr}
+.mixrow{padding:6px 0;border-top:1px solid var(--line)}
+.mixrow:first-child{border-top:0}
+.mixrow .mn{font-weight:700;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mixrow .vol{margin-top:4px}
+#mix{max-height:55vh;overflow-y:auto}
+/* full-screen views: the touchpad and the launcher */
+.full{position:fixed;inset:0;z-index:22;background:var(--bg);display:flex;flex-direction:column;max-width:640px;margin:0 auto}
+.full .top{display:flex;align-items:center;gap:10px;padding:12px 14px}
+.full .top h2{flex:1;margin:0;font:700 17px/1.2 var(--mono)}
+.pad{flex:1;margin:0 14px;border-radius:var(--r-card);background:var(--card);border:1px solid var(--line);touch-action:none;display:grid;place-items:center;text-align:center;color:var(--faint);font-size:13px;line-height:1.7;padding:20px;user-select:none;-webkit-user-select:none}
+.pad.active{border-color:rgba(243,139,168,.45);background:#24252a}
+.mbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 14px 0}
+.mbtns button{height:56px;border-radius:var(--r-ctl);background:var(--raised);font-weight:700;touch-action:none;user-select:none;-webkit-user-select:none}
+.mbtns button.on{background:var(--accent-soft);color:var(--accent)}
+.keys{display:flex;gap:6px;overflow-x:auto;padding:8px 14px;scrollbar-width:none}
+.keys::-webkit-scrollbar{display:none}
+.keys button{flex:none;padding:9px 12px;border-radius:12px;background:var(--raised);font:600 13px/1 var(--mono)}
+.keys button:active{background:var(--accent-soft);color:var(--accent)}
+.typer{margin:0 14px 6px}
+.typer textarea{width:100%;resize:none;background:var(--card);border:1px solid var(--line-strong);border-radius:16px;padding:11px 14px;outline:none;height:46px}
+.typer textarea:focus{border-color:var(--accent)}
+.list{flex:1;overflow-y:auto;padding:0 14px 16px}
+.sec{font:700 12px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:14px 2px 8px}
+.app-row{display:flex;align-items:center;gap:6px;border-top:1px solid var(--line)}
+.sec+.app-row{border-top:0}
+.app-go{flex:1;min-width:0;display:flex;align-items:center;gap:12px;padding:9px 2px;text-align:left}
+.app-go img,.app-go .ph{width:34px;height:34px;border-radius:9px;flex:none;object-fit:contain}
+.app-go .ph{background:var(--raised);display:grid;place-items:center;color:var(--accent)}
+.app-go .ph svg{width:18px;height:18px}
+.app-go b{flex:1;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.star{width:38px;height:38px;display:grid;place-items:center;color:var(--faint);flex:none}
+.star svg{width:19px;height:19px}
+.star.on{color:var(--accent)}
+.star.on svg{fill:currentColor}
+.games{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.game{position:relative;border-radius:14px;overflow:hidden;background:var(--raised)}
+.game-go{display:block;width:100%;aspect-ratio:460/215;padding:0}
+.game-go:active{opacity:.8}
+.game img{width:100%;height:100%;object-fit:cover;display:block}
+.game .star{position:absolute;top:2px;right:2px;width:32px;height:32px;border-radius:10px;background:rgba(23,24,27,.6)}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -174,7 +224,15 @@ const ICON = {
   sound: svg('<path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/>'),
   soundOff: svg('<path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/>'),
   person: svg('<circle cx="12" cy="7.5" r="3.5"/><path d="M5 20.5a7 7 0 0 1 14 0"/>'),
-  save: svg('<path d="M12 4v11M7 10.5l5 5 5-5"/><rect x="4" y="17" width="16" height="3.5" rx="1.2"/>')
+  save: svg('<path d="M12 4v11M7 10.5l5 5 5-5"/><rect x="4" y="17" width="16" height="3.5" rx="1.2"/>'),
+  music: svg('<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>'),
+  mixer: svg('<path d="M6 4v16M12 4v16M18 4v16"/><path d="M4 14.5h4M10 8.5h4M16 12.5h4" stroke-width="3"/>'),
+  pad: svg('<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 15h18M12 15v5"/>'),
+  apps: svg('<rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><path d="M17 13.5v7M13.5 17h7"/>'),
+  game: svg('<rect x="2.5" y="7" width="19" height="11" rx="5"/><path d="M7.5 10.5v4M5.5 12.5h4M15.5 11.5h.01M18 13.5h.01"/>'),
+  star: svg('<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/>'),
+  close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
+  kbd: svg('<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M7 14h10"/>')
 };
 
 // ── storage and the bridge to the phone ─────────────────────────────────────
@@ -269,7 +327,7 @@ function render() {
   if (!me.paired) return renderPair(app);
   if (!TABS.some(([id]) => id === tab)) tab = "remote";
   app.innerHTML = `
-    <header><span class="dot" id="dot"></span><h1 id="host">${esc(me.pc || "Astra Remote")}</h1></header>
+    <header><span class="dot" id="dot"></span><h1 id="host">${esc(me.pc || "Phone Remote")}</h1></header>
     <main id="main"></main>
     <nav>${TABS.map(([id, label]) => `<button data-tab="${id}" class="${tab === id ? "on" : ""}">${ICON[id === "chat" ? "astra" : id]}<span>${label}</span></button>`).join("")}</nav>`;
   app.querySelectorAll("nav button").forEach((b) => b.onclick = () => { tab = b.dataset.tab; store.set("tab", tab); render(); });
@@ -285,7 +343,7 @@ function paintStatus() {
   const dot = $("#dot");
   if (!dot) return;
   dot.className = "dot " + (online === true ? "on" : online === false ? "off" : "");
-  $("#host").textContent = state?.system?.host || me.pc || "Astra Remote";
+  $("#host").textContent = state?.system?.host || me.pc || "Phone Remote";
 }
 
 // files Astra sent to the phone that have not been looked at yet
@@ -308,7 +366,7 @@ function renderPair(app) {
   stopPolling();
   app.innerHTML = `<main><div class="center">
     <h2>Подключить к ПК</h2>
-    <p class="hint" style="margin:0">1. На компьютере: Astra → <b>Astra Remote</b> → «Подключить телефон».<br>2. Здесь нажми «Сканировать QR-код» и наведи камеру на код.<br>3. На ПК появится запрос — нажми «Разрешить», если код совпадает.</p>
+    <p class="hint" style="margin:0">1. На компьютере: Astra → <b>Phone Remote</b> → «Подключить телефон».<br>2. Здесь нажми «Сканировать QR-код» и наведи камеру на код.<br>3. На ПК появится запрос — нажми «Разрешить», если код совпадает.</p>
     <input class="field" id="name" maxlength="40" placeholder="Имя этого телефона" value="${esc(store.get("name", me.device || ""))}">
     <div id="pairBox"><button class="btn primary wide" id="scan">Сканировать QR-код</button></div>
     <p class="hint" id="pairMsg" style="margin:0"></p>
@@ -355,6 +413,7 @@ function renderRemote(main) {
     <div class="card"><div class="stats" id="stats"></div></div>
     <div class="card">
       <div class="np" id="np"></div>
+      <div class="seek" id="seek" hidden><span id="posT">0:00</span><input type="range" min="0" max="100" step="1" id="pos"><span id="durT">0:00</span></div>
       <div class="transport">
         <button class="round" data-key="prev" aria-label="Назад">${ICON.prev}</button>
         <button class="round big" data-key="play_pause" id="pp" aria-label="Пауза">${ICON.play}</button>
@@ -364,8 +423,13 @@ function renderRemote(main) {
         <button class="icon-btn" id="mute" aria-label="Звук">${ICON.vol}</button>
         <input type="range" min="0" max="100" step="1" id="vol">
         <span class="n" id="voln"></span>
+        <button class="icon-btn" id="mixer" aria-label="Громкость приложений">${ICON.mixer}</button>
       </div>
     </div>
+    <div class="card" id="tools"><div class="grid two">
+      <button class="tile" id="openPad">${ICON.pad}<span>Тачпад и клавиатура</span></button>
+      <button class="tile" id="openApps">${ICON.apps}<span>Программы и игры</span></button>
+    </div></div>
     <div class="card"><h2>Кнопки</h2><div class="grid" id="buttons"></div></div>
     <div class="card" id="recent" hidden></div>`;
   main.querySelectorAll("[data-key]").forEach((b) => b.onclick = async () => {
@@ -388,6 +452,21 @@ function renderRemote(main) {
       if (state) state.volume = v;
       paintRemote();
     } catch (e) { toast(e.message); }
+  };
+  $("#mixer").onclick = openMixer;
+  $("#openPad").onclick = openPad;
+  $("#openApps").onclick = openApps;
+  const pos = $("#pos");
+  pos.oninput = () => { seekDragging = true; $("#posT").textContent = fmtTime(Number(pos.value)); };
+  pos.onchange = async () => {
+    const sec = Number(pos.value);
+    try {
+      await post("/api/media/seek", { sec });
+      if (mediaAt) Object.assign(mediaAt, { pos: sec, at: Date.now() });
+    } catch (e) { toast(e.message); }
+    seekDragging = false;
+    paintPos();
+    setTimeout(refresh, 900);
   };
   paintRemote();
 }
@@ -415,10 +494,11 @@ function paintRemote() {
     sentBox.querySelectorAll("[data-i]").forEach((b) => b.onclick = () => { const x = sent[Number(b.dataset.i.slice(1))]; fetchFile(x.path, x.name); });
   }
   const m = s.media;
-  $("#np").innerHTML = m && (m.title || m.artist)
-    ? `<div class="t">${esc(m.title || "Без названия")}</div><div class="a">${esc(m.artist || appName(m.app))}</div>`
-    : '<div class="t" style="color:var(--muted);font-weight:500">Ничего не играет</div><div class="a">Кнопки управляют любым плеером на ПК</div>';
+  paintMedia();
   $("#pp").innerHTML = m?.playing ? ICON.pause : ICON.play;
+  $("#openPad").hidden = s.allow?.input === false;
+  $("#openApps").hidden = s.allow?.launch === false;
+  $("#tools").hidden = $("#openPad").hidden && $("#openApps").hidden;
   if (s.volume) {
     if (!volDragging) { $("#vol").value = s.volume.volume; $("#voln").textContent = s.volume.volume; }
     const mute = $("#mute");
@@ -432,12 +512,278 @@ function paintRemote() {
   box.dataset.sig = sig;
   box.innerHTML = btns.length
     ? btns.map((b) => `<button class="tile" data-n="${b.n}">${b.icon ? `<span class="e">${esc(b.icon)}</span>` : ""}<span>${esc(b.label)}</span></button>`).join("")
-    : '<p class="hint" style="grid-column:1/-1;margin:0">Кнопок пока нет. В Astra открой Astra Remote → «Кнопки», подпиши кнопку и повесь на неё команду Astra.</p>';
+    : '<p class="hint" style="grid-column:1/-1;margin:0">Кнопок пока нет. В Astra открой Phone Remote → «Кнопки», подпиши кнопку и повесь на неё команду Astra.</p>';
   box.querySelectorAll("[data-n]").forEach((b) => b.onclick = async () => {
     buzz();
     try { await post("/api/button", { n: Number(b.dataset.n) }); toast("Готово"); } catch (e) { toast(e.message); }
   });
 }
+// ── now playing: the cover and where in the track ───────────────────────────
+let coverKey = null, coverData = null, seekDragging = false, mediaAt = null;
+const fmtTime = (sec) => {
+  const t = Math.max(0, Math.round(sec || 0)), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), x = t % 60;
+  return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0");
+};
+function paintMedia() {
+  const np = $("#np");
+  if (!np) return;
+  const m = state?.media;
+  const key = m ? [m.title, m.artist, m.app].join("|") : "";
+  if (key !== coverKey) {
+    // a new track: its cover comes once, not with every poll
+    coverKey = key;
+    coverData = null;
+    if (m?.cover) getJson("/api/media/cover").then((r) => { if (coverKey === key) { coverData = r.cover; paintMedia(); } }).catch(() => {});
+  }
+  const sig = key + (coverData ? "+" : "");
+  if (np.dataset.sig !== sig) {
+    np.dataset.sig = sig;
+    np.innerHTML = m && (m.title || m.artist)
+      ? `${coverData ? `<img class="cover" src="data:image/jpeg;base64,${coverData}" alt="">` : `<div class="cover">${ICON.music}</div>`}
+         <div class="nt"><div class="t">${esc(m.title || "Без названия")}</div><div class="a">${esc(m.artist || appName(m.app))}</div></div>`
+      : '<div class="nt"><div class="t" style="color:var(--muted);font-weight:500">Ничего не играет</div><div class="a">Кнопки управляют любым плеером на ПК</div></div>';
+  }
+  const seek = $("#seek");
+  seek.hidden = !(m && m.dur > 0);
+  if (m && m.dur > 0 && !seekDragging) mediaAt = { pos: m.pos, dur: m.dur, playing: m.playing, at: Date.now() };
+  if (!m || !(m.dur > 0)) mediaAt = null;
+  $("#pos").disabled = !m?.seek;
+  paintPos();
+}
+// between polls the position runs on here
+function paintPos() {
+  const r = $("#pos");
+  if (!r || !mediaAt || seekDragging) return;
+  const at = Math.min(mediaAt.dur, mediaAt.pos + (mediaAt.playing ? (Date.now() - mediaAt.at) / 1000 : 0));
+  r.max = Math.max(1, Math.round(mediaAt.dur));
+  r.value = Math.round(at);
+  $("#posT").textContent = fmtTime(at);
+  $("#durT").textContent = fmtTime(mediaAt.dur);
+}
+setInterval(() => { if (tab === "remote" && !document.hidden) paintPos(); }, 1000);
+
+// ── each app's volume ───────────────────────────────────────────────────────
+async function openMixer() {
+  buzz();
+  $("#layer").innerHTML = `<div class="sheet" id="sheet"><div>
+    <b>Громкость приложений</b>
+    <div id="mix" class="hint">Загружаю…</div>
+    <button class="btn" data-close>Готово</button></div></div>`;
+  $("#sheet").onclick = (ev) => { if (ev.target.id === "sheet" || ev.target.hasAttribute("data-close")) $("#layer").innerHTML = ""; };
+  try {
+    paintMixer((await getJson("/api/volume/apps")).apps);
+  } catch (e) {
+    if ($("#mix")) $("#mix").textContent = e.message;
+  }
+}
+function paintMixer(list) {
+  const box = $("#mix");
+  if (!box) return;
+  box.className = "";
+  if (!list.length) { box.innerHTML = '<p class="hint" style="margin:0">Сейчас ни одно приложение не играет звук</p>'; return; }
+  box.innerHTML = list.map((a) => `<div class="mixrow" data-pid="${a.pid}">
+      <div class="mn">${esc(a.pid === 0 ? "Звуки Windows" : a.name)}</div>
+      <div class="vol"><button class="icon-btn ${a.muted ? "on" : ""}" data-mute aria-label="Звук">${a.muted ? ICON.mute : ICON.vol}</button>
+        <input type="range" min="0" max="100" step="1" value="${a.volume}"><span class="n">${a.volume}</span></div></div>`).join("");
+  box.querySelectorAll(".mixrow").forEach((row) => {
+    const pid = Number(row.dataset.pid);
+    const range = $("input", row);
+    let t = null;
+    range.oninput = () => {
+      $(".n", row).textContent = range.value;
+      clearTimeout(t);
+      t = setTimeout(() => post("/api/volume/app", { pid, volume: Number(range.value) }).catch((e) => toast(e.message)), 120);
+    };
+    $("[data-mute]", row).onclick = async () => {
+      buzz();
+      const a = list.find((x) => x.pid === pid);
+      try { paintMixer((await post("/api/volume/app", { pid, muted: !a.muted })).apps); } catch (e) { toast(e.message); }
+    };
+  });
+}
+
+// ── the touchpad and the keyboard ───────────────────────────────────────────
+// Events go out in small batches, one request at a time: moves made while a request is on its way
+// add up into the next one, so a slow line means a coarser pointer, never a queue of old moves.
+const pad = { q: [], busy: false, last: 0, failed: false, t: null };
+function padSend(ev) {
+  const last = pad.q[pad.q.length - 1];
+  if (last && last[0] === ev[0] && (ev[0] === "m" || ev[0] === "w")) { last[1] += ev[1]; last[2] += ev[2]; }
+  else if (last && last[0] === "t" && ev[0] === "t") last[1] += ev[1];
+  else pad.q.push(ev);
+  padFlush();
+}
+function padFlush() {
+  if (pad.busy || !pad.q.length) return;
+  const wait = 35 - (Date.now() - pad.last);
+  if (wait > 0) { clearTimeout(pad.t); pad.t = setTimeout(padFlush, wait); return; }
+  const events = pad.q.splice(0);
+  pad.busy = true;
+  pad.last = Date.now();
+  post("/api/input", { events })
+    .then(() => { pad.failed = false; })
+    .catch((e) => { if (!pad.failed) toast(e.message); pad.failed = true; })
+    .finally(() => { pad.busy = false; padFlush(); });
+}
+// [label, virtual key, modifiers: 1 Ctrl, 2 Shift, 4 Alt, 8 Win]
+const PAD_KEYS = [["Esc", 27], ["Tab", 9], ["Win", 91], ["←", 37], ["↑", 38], ["↓", 40], ["→", 39], ["Enter", 13], ["⌫", 8], ["Del", 46],
+  ["Пробел", 32], ["Ctrl+C", 67, 1], ["Ctrl+V", 86, 1], ["Ctrl+Z", 90, 1], ["Ctrl+A", 65, 1], ["Alt+Tab", 9, 4], ["Alt+F4", 115, 4],
+  ["Win+D", 68, 8], ["F5", 116], ["F11", 122], ["PgUp", 33], ["PgDn", 34], ["Home", 36], ["End", 35]];
+
+function openPad() {
+  buzz();
+  let speed = store.get("padSpeed", 1.6);
+  $("#layer").innerHTML = `<div class="full">
+    <div class="top"><button class="icon-btn" id="padClose" aria-label="Закрыть">${ICON.close}</button><h2>Тачпад</h2>
+      <button class="icon-btn" id="padKbd" aria-label="Клавиатура">${ICON.kbd}</button></div>
+    <div class="pad" id="pad"><div>Один палец — мышь, касание — клик<br>Два пальца — прокрутка<br>Касание двумя — правый клик<br>Держи «Левую» и веди пальцем — перетаскивание</div></div>
+    <div class="mbtns"><button id="lmb">Левая</button><button id="rmb">Правая</button></div>
+    <div class="keys">${PAD_KEYS.map((k, i) => `<button data-k="${i}">${esc(k[0])}</button>`).join("")}</div>
+    <div class="typer"><textarea id="typer" rows="1" placeholder="Печатай здесь — текст сразу идёт на ПК" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea></div>
+    <div class="vol" style="margin:0 14px 14px"><span class="hint" style="flex:none">Скорость</span><input type="range" id="padSpeed" min="0.6" max="3.6" step="0.1" value="${speed}"></div>
+  </div>`;
+  post("/api/input", { events: [] }).catch((e) => toast(e.message)); // starts the PC's side ahead of the first touch
+  let lmbDown = false;
+  const close = () => { if (lmbDown) padSend(["b", 0, 2]); $("#layer").innerHTML = ""; };
+  $("#padClose").onclick = close;
+  $("#padSpeed").oninput = (e) => { speed = Number(e.target.value); store.set("padSpeed", speed); };
+
+  const el = $("#pad");
+  const pts = new Map();
+  let g = null, fx = 0, fy = 0, sv = 0, sh = 0;
+  el.onpointerdown = (e) => {
+    try { el.setPointerCapture(e.pointerId); } catch {}
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size === 1) g = { t: Date.now(), moved: 0, fingers: 1 };
+    else if (g) g.fingers = Math.max(g.fingers, pts.size);
+    el.classList.add("active");
+  };
+  el.onpointermove = (e) => {
+    const p = pts.get(e.pointerId);
+    if (!p) return;
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    p.x = e.clientX;
+    p.y = e.clientY;
+    if (g) g.moved += Math.abs(dx) + Math.abs(dy);
+    if (pts.size === 1) {
+      // faster strokes go further, as on a laptop touchpad
+      const k = speed * (1 + Math.min(2.5, Math.hypot(dx, dy) / 14));
+      fx += dx * k;
+      fy += dy * k;
+      const ix = Math.trunc(fx), iy = Math.trunc(fy);
+      if (ix || iy) { fx -= ix; fy -= iy; padSend(["m", ix, iy]); }
+    } else if (pts.size === 2) {
+      // each finger reports its own move: half of each is the pair's; the page follows the fingers
+      sv += dy * 2;
+      sh -= dx * 2;
+      const v = Math.trunc(sv), h = Math.trunc(sh);
+      if (Math.abs(v) >= 8 || Math.abs(h) >= 8) { sv -= v; sh -= h; padSend(["w", v, h]); }
+    }
+  };
+  const lift = (e, cancelled) => {
+    if (!pts.delete(e.pointerId) || pts.size) return;
+    if (g && !cancelled && Date.now() - g.t < 280 && g.moved < 14) { padSend(["b", g.fingers >= 2 ? 1 : 0, 0]); buzz(); }
+    g = null;
+    sv = sh = 0;
+    el.classList.remove("active");
+  };
+  el.onpointerup = (e) => lift(e, false);
+  el.onpointercancel = (e) => lift(e, true);
+
+  const lmb = $("#lmb");
+  const lmbUp = () => { if (!lmbDown) return; lmbDown = false; lmb.classList.remove("on"); padSend(["b", 0, 2]); };
+  lmb.onpointerdown = (e) => { try { lmb.setPointerCapture(e.pointerId); } catch {} lmbDown = true; lmb.classList.add("on"); buzz(); padSend(["b", 0, 1]); };
+  lmb.onpointerup = lmbUp;
+  lmb.onpointercancel = lmbUp;
+  $("#rmb").onclick = () => { buzz(); padSend(["b", 1, 0]); };
+  $("#layer").querySelectorAll("[data-k]").forEach((b) => b.onclick = () => {
+    const k = PAD_KEYS[Number(b.dataset.k)];
+    buzz();
+    padSend(["k", k[1], k[2] || 0]);
+  });
+
+  // The phone's keyboard types into this field; what changed in it goes to the PC as typed text and
+  // backspaces, so autocorrect and word suggestions land there too. A zero-width space keeps one
+  // character in the field, so a backspace on an "empty" field still arrives.
+  const ta = $("#typer");
+  const Z = "​";
+  ta.value = Z;
+  let prev = Z;
+  ta.oninput = () => {
+    const cur = ta.value;
+    let i = 0;
+    while (i < prev.length && i < cur.length && prev[i] === cur[i]) i++;
+    for (let n = prev.length - i; n > 0; n--) padSend(["k", 8, 0]);
+    const ins = cur.slice(i).replace(/​/g, "");
+    if (ins) padSend(["t", ins]);
+    prev = cur;
+    if (!cur.startsWith(Z) || cur.includes("\n") || cur.length > 80) { ta.value = Z; prev = Z; }
+  };
+  $("#padKbd").onclick = () => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); };
+}
+
+// ── programs and games ──────────────────────────────────────────────────────
+// The list (with icons) is kept on the phone and refreshed each time the view opens.
+let appList = store.get("apps", null);
+function openApps() {
+  buzz();
+  $("#layer").innerHTML = `<div class="full">
+    <div class="top"><button class="icon-btn" id="appsClose" aria-label="Закрыть">${ICON.close}</button><h2>Программы и игры</h2>
+      <button class="icon-btn" id="appsReload" aria-label="Обновить">${ICON.restart}</button></div>
+    <div style="padding:0 14px 6px"><input class="field" id="appsQ" placeholder="Найти программу или игру" autocomplete="off"></div>
+    <div class="list" id="appsList"><p class="hint">Загружаю список с ПК…</p></div></div>`;
+  $("#appsClose").onclick = () => { $("#layer").innerHTML = ""; };
+  $("#appsReload").onclick = () => { buzz(); loadApps(true); };
+  $("#appsQ").oninput = paintApps;
+  paintApps();
+  loadApps(false);
+}
+async function loadApps(loud) {
+  try {
+    appList = (await getJson("/api/apps")).apps;
+    store.set("apps", appList);
+    paintApps();
+    if (loud) toast("Список обновлён");
+  } catch (e) {
+    if (!appList && $("#appsList")) $("#appsList").innerHTML = `<p class="hint">${esc(e.message)}</p>`;
+    else toast(e.message);
+  }
+}
+function paintApps() {
+  const box = $("#appsList");
+  if (!box || !appList) return;
+  const q = ($("#appsQ").value || "").trim().toLowerCase();
+  const fav = new Set(store.get("favApps", []));
+  const items = appList.filter((a) => !q || a.name.toLowerCase().includes(q));
+  const starBtn = (a) => `<button class="star ${fav.has(a.id) ? "on" : ""}" data-star="${a.id}" aria-label="В избранное">${ICON.star}</button>`;
+  const row = (a) => `<div class="app-row"><button class="app-go" data-id="${a.id}">${a.icon ? `<img src="data:image/png;base64,${a.icon}" alt="">`
+    : `<span class="ph">${a.kind === "game" ? ICON.game : ICON.apps}</span>`}<b>${esc(a.name)}</b></button>${starBtn(a)}</div>`;
+  const favs = items.filter((a) => fav.has(a.id));
+  const games = items.filter((a) => !fav.has(a.id) && a.art);
+  const rest = items.filter((a) => !fav.has(a.id) && !a.art);
+  box.innerHTML = (favs.length ? `<div class="sec">Избранное</div>${favs.map(row).join("")}` : "")
+    + (games.length ? `<div class="sec">Игры</div><div class="games">${games.map((a) => `<div class="game">
+        <button class="game-go" data-id="${a.id}" aria-label="${esc(a.name)}"><img src="data:image/jpeg;base64,${a.art}" alt=""></button>${starBtn(a)}</div>`).join("")}</div>` : "")
+    + (rest.length ? `<div class="sec">Программы</div>${rest.map(row).join("")}` : "")
+    + (items.length ? "" : '<p class="hint">Ничего не нашлось</p>');
+  box.querySelectorAll("[data-id]").forEach((b) => b.onclick = () => launchApp(b.dataset.id));
+  box.querySelectorAll("[data-star]").forEach((b) => b.onclick = () => {
+    const set = new Set(store.get("favApps", []));
+    const id = b.dataset.star;
+    if (set.has(id)) set.delete(id); else set.add(id);
+    store.set("favApps", [...set]);
+    paintApps();
+  });
+}
+async function launchApp(id) {
+  const a = (appList || []).find((x) => x.id === id);
+  buzz();
+  try {
+    await post("/api/apps/launch", { id });
+    toast("Запускаю " + (a?.name || ""));
+  } catch (e) { toast(e.message); }
+}
+
 // what to try when the PC does not answer; away from home that is almost always Tailscale
 function offlineBanner() {
   const why = me.relay ? "Приложение пробует и домашнюю сеть, и ретранслятор — ждать ничего не нужно."
@@ -652,7 +998,7 @@ function renderFiles(main) {
     <div class="card" id="xferCard" hidden><h2>Передача</h2><div id="xfers"></div></div>
     ${sent.length ? `<div class="card"><h2>Astra прислала</h2><div class="files" id="sent"></div></div>` : ""}
     <div class="card"><h2>Общая папка на ПК</h2><div class="crumbs" id="crumbs"></div><div class="files" id="list"><p class="hint">Загружаю…</p></div></div>
-    <p class="hint">Всё, что отправляешь с телефона, попадает в папку «С телефона». Astra видит эту папку и может сама положить сюда файл для тебя — просто попроси её в чате. Отправить на ПК можно и из любого приложения: «Поделиться» → Astra Remote.</p>`;
+    <p class="hint">Всё, что отправляешь с телефона, попадает в папку «С телефона». Astra видит эту папку и может сама положить сюда файл для тебя — просто попроси её в чате. Отправить на ПК можно и из любого приложения: «Поделиться» → Phone Remote.</p>`;
   $("#pick").onclick = () => AR.pickFiles();
   $("#reload").onclick = () => { refresh(); loadDir(); };
   $("#openPc").onclick = async () => { buzz(); try { await post("/api/files/open", { path: filePath }); toast("Папка открыта на ПК"); } catch (e) { toast(e.message); } };
@@ -684,7 +1030,7 @@ function paintDir() {
   const list = $("#list");
   if (!list || !listing) return;
   const parts = filePath ? filePath.split("/") : [];
-  $("#crumbs").innerHTML = `<button data-p="">${esc(listing.root || "Astra Remote")}</button>` +
+  $("#crumbs").innerHTML = `<button data-p="">${esc(listing.root || "Phone Remote")}</button>` +
     parts.map((p, i) => ` / <button data-p="${esc(parts.slice(0, i + 1).join("/"))}">${esc(p)}</button>`).join("");
   $("#crumbs").querySelectorAll("button").forEach((b) => b.onclick = () => openDir(b.dataset.p));
   if (listing.error) { list.innerHTML = `<p class="hint" style="color:var(--bad)">${esc(listing.error)}</p>`; return; }
@@ -794,7 +1140,7 @@ function renderMore(main) {
   const clip = allow.clipboard === false ? "" : `<div class="card"><h2>Буфер обмена</h2><div class="grid" style="grid-template-columns:1fr 1fr">
       <button class="tile" id="clipUp">${ICON.up}<span>С телефона на ПК</span></button>
       <button class="tile" id="clipDown">${ICON.down}<span>С ПК на телефон</span></button></div>
-      <p class="hint" style="margin:10px 0 0">Только текст. Ссылку из другого приложения можно открыть на ПК: «Поделиться» → Astra Remote.</p></div>`;
+      <p class="hint" style="margin:10px 0 0">Только текст. Ссылку из другого приложения можно открыть на ПК: «Поделиться» → Phone Remote.</p></div>`;
   const lockRow = me.lockAvailable
     ? `<label class="setting"><div>Блокировать приложение<br><span class="hint">Через минуту в фоне — отпечаток, лицо или PIN телефона</span></div><input type="checkbox" id="lockSet" ${me.lock ? "checked" : ""}></label>`
     : '<p class="hint" style="margin:0 0 8px">Чтобы приложение блокировалось в фоне, поставь на телефон PIN, графический ключ или отпечаток.</p>';

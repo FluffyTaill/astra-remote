@@ -70,7 +70,7 @@ public final class MainActivity extends Activity {
         final File f = new File(getFilesDir(), CRASH);
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
             try (java.io.PrintWriter w = new java.io.PrintWriter(new java.io.FileWriter(f))) {
-                w.println("Astra Remote " + BuildInfo.version(this) + ", Android " + Build.VERSION.RELEASE + ", " + Build.MANUFACTURER + " " + Build.MODEL);
+                w.println("Phone Remote " + BuildInfo.version(this) + ", Android " + Build.VERSION.RELEASE + ", " + Build.MANUFACTURER + " " + Build.MODEL);
                 e.printStackTrace(w);
             } catch (Exception ignored) {
             }
@@ -95,7 +95,7 @@ public final class MainActivity extends Activity {
                 .setMessage("Отправь этот текст разработчику — по нему видно, что сломалось.\n\n" + report.substring(0, Math.min(report.length(), 2500)))
                 .setPositiveButton("Скопировать", (d, w) -> {
                     android.content.ClipboardManager cm = getSystemService(android.content.ClipboardManager.class);
-                    if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Astra Remote crash", report));
+                    if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Phone Remote crash", report));
                 })
                 .setNegativeButton("Закрыть", null)
                 .show();
@@ -271,7 +271,7 @@ public final class MainActivity extends Activity {
         box.setBackgroundColor(BG);
         box.setClickable(true); // swallow taps meant for the page underneath
         TextView title = new TextView(this);
-        title.setText("Astra Remote заблокирован");
+        title.setText("Phone Remote заблокирован");
         title.setTextColor(0xffeceef5);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
         title.setGravity(Gravity.CENTER);
@@ -314,7 +314,7 @@ public final class MainActivity extends Activity {
             return;
         }
         if (Build.VERSION.SDK_INT >= 28) {
-            BiometricPrompt.Builder b = new BiometricPrompt.Builder(this).setTitle("Astra Remote");
+            BiometricPrompt.Builder b = new BiometricPrompt.Builder(this).setTitle("Phone Remote");
             if (Build.VERSION.SDK_INT >= 30) {
                 b.setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG | BiometricManager.Authenticators.DEVICE_CREDENTIAL);
             } else {
@@ -328,7 +328,7 @@ public final class MainActivity extends Activity {
             });
         } else {
             KeyguardManager km = getSystemService(KeyguardManager.class);
-            Intent i = km.createConfirmDeviceCredentialIntent("Astra Remote", "Разблокируй, чтобы открыть пульт");
+            Intent i = km.createConfirmDeviceCredentialIntent("Phone Remote", "Разблокируй, чтобы открыть пульт");
             if (i == null) unlocked();
             else startActivityForResult(i, REQ_UNLOCK);
         }

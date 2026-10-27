@@ -29,7 +29,7 @@ final class Remote {
 
     static Pinned.Response call(Context ctx, String method, String path, String json) throws IOException {
         Vault.Pairing p = new Vault(ctx).load();
-        if (p == null) throw new IOException("Телефон не подключён к ПК: открой Astra Remote");
+        if (p == null) throw new IOException("Телефон не подключён к ПК: открой Phone Remote");
         Relay r = Relay.valid(p.relayUrl, p.relayId) ? new Relay(p.relayUrl, p.relayId) : null;
         try {
             return new Pinned(p.hosts, p.port, p.fingerprint, p.lastHost, r).request(method, path, p.token, json, 20000);

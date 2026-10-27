@@ -15,6 +15,10 @@ import { DATA_DIR } from "./store.js";
 const HELPER = String.raw`
 using System;
 using System.IO;
+using System.Text;
+using System.Diagnostics;
+using System.Collections.Generic;
+using System.Runtime.InteropServices.ComTypes;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Drawing.Drawing2D;
@@ -36,6 +40,36 @@ interface IMMDevice { int Activate(ref Guid id, int clsCtx, IntPtr p, out IAudio
 [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IMMDeviceEnumerator { int f(); int GetDefaultAudioEndpoint(int flow, int role, out IMMDevice d); }
 [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")] class MMDeviceEnumerator { }
+
+// the same two interfaces again, for Activate with any interface (here the session manager)
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceAny { [PreserveSig] int Activate(ref Guid id, int clsCtx, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o); }
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IMMDeviceEnumeratorAny { [PreserveSig] int f(); [PreserveSig] int GetDefaultAudioEndpoint(int flow, int role, out IMMDeviceAny d); }
+// each app's own volume: one audio session per app on the default output device
+[Guid("77AA99A0-1BD6-484F-8BC7-2C654C9A9B6F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionManager2 { [PreserveSig] int f(); [PreserveSig] int g(); [PreserveSig] int GetSessionEnumerator(out IAudioSessionEnumerator e); }
+[Guid("E2F5BB11-0570-40CA-ACDD-3AA01277DEE8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionEnumerator { [PreserveSig] int GetCount(out int n); [PreserveSig] int GetSession(int i, out IAudioSessionControl2 s); }
+[Guid("bfb7ff88-7239-4fc9-8fa2-07c950be9c6d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAudioSessionControl2 {
+  [PreserveSig] int GetState(out int s);
+  [PreserveSig] int a(); [PreserveSig] int b(); [PreserveSig] int c(); [PreserveSig] int d(); [PreserveSig] int e();
+  [PreserveSig] int f(); [PreserveSig] int g(); [PreserveSig] int h(); [PreserveSig] int i(); [PreserveSig] int j();
+  [PreserveSig] int GetProcessId(out uint pid);
+  [PreserveSig] int IsSystemSoundsSession();
+}
+[Guid("87CE5498-68D6-44E5-9215-6DA47EF883D8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ISimpleAudioVolume {
+  [PreserveSig] int SetMasterVolume(float v, ref Guid ctx); [PreserveSig] int GetMasterVolume(out float v);
+  [PreserveSig] int SetMute([MarshalAs(UnmanagedType.Bool)] bool m, ref Guid ctx); [PreserveSig] int GetMute([MarshalAs(UnmanagedType.Bool)] out bool m);
+}
+
+// SendInput: the touchpad and the keyboard on the phone
+[StructLayout(LayoutKind.Sequential)] struct MOUSEINPUT { public int dx, dy, data; public uint flags, time; public IntPtr extra; }
+[StructLayout(LayoutKind.Sequential)] struct KEYBDINPUT { public ushort vk, scan; public uint flags, time; public IntPtr extra; }
+[StructLayout(LayoutKind.Explicit)] struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
+[StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public INPUTUNION u; }
 
 public static class AR {
   [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
@@ -82,6 +116,143 @@ public static class AR {
       }
     }
   }
+
+  // ── input ──
+  [DllImport("user32.dll")] static extern uint SendInput(uint n, INPUT[] inputs, int size);
+  static void Send(List<INPUT> a) { if (a.Count > 0) SendInput((uint)a.Count, a.ToArray(), Marshal.SizeOf(typeof(INPUT))); }
+  static INPUT M(int data, uint flags, int dx = 0, int dy = 0) { var i = new INPUT { type = 0 }; i.u.mi.dx = dx; i.u.mi.dy = dy; i.u.mi.data = data; i.u.mi.flags = flags; return i; }
+  static INPUT K(ushort vk, ushort scan, uint flags) { var i = new INPUT { type = 1 }; i.u.ki.vk = vk; i.u.ki.scan = scan; i.u.ki.flags = flags; return i; }
+  static readonly uint[] DOWN = { 0x2, 0x8, 0x20 }, UP = { 0x4, 0x10, 0x40 };
+  public static void Move(int dx, int dy) { Send(new List<INPUT> { M(0, 0x1, dx, dy) }); }
+  // button 0 left, 1 right, 2 middle; kind 0 click, 1 press, 2 release
+  public static void Button(int b, int kind) {
+    b = Math.Max(0, Math.Min(2, b));
+    var a = new List<INPUT>();
+    if (kind != 2) a.Add(M(0, DOWN[b]));
+    if (kind != 1) a.Add(M(0, UP[b]));
+    Send(a);
+  }
+  public static void Wheel(int v, int h) {
+    var a = new List<INPUT>();
+    if (v != 0) a.Add(M(v, 0x800));
+    if (h != 0) a.Add(M(h, 0x1000));
+    Send(a);
+  }
+  // text as Unicode key strokes, so any language goes in without switching the layout
+  public static void Text(string s) {
+    var a = new List<INPUT>();
+    foreach (char c in s) {
+      if (c == '\n') { a.Add(K(0x0D, 0, 0)); a.Add(K(0x0D, 0, 2)); }
+      else if (c != '\r') { a.Add(K(0, c, 4)); a.Add(K(0, c, 6)); }
+    }
+    Send(a);
+  }
+  static uint Ext(int vk) { return (vk >= 0x21 && vk <= 0x28) || vk == 0x2D || vk == 0x2E || vk == 0x5B ? 1u : 0u; }
+  // one key with modifiers: 1 Ctrl, 2 Shift, 4 Alt, 8 Win
+  public static void Key(int vk, int mods) {
+    var mk = new List<int>();
+    if ((mods & 1) != 0) mk.Add(0x11);
+    if ((mods & 2) != 0) mk.Add(0x10);
+    if ((mods & 4) != 0) mk.Add(0x12);
+    if ((mods & 8) != 0) mk.Add(0x5B);
+    var a = new List<INPUT>();
+    foreach (var m in mk) a.Add(K((ushort)m, 0, Ext(m)));
+    a.Add(K((ushort)vk, 0, Ext(vk))); a.Add(K((ushort)vk, 0, Ext(vk) | 2));
+    for (int i = mk.Count - 1; i >= 0; i--) a.Add(K((ushort)mk[i], 0, Ext(mk[i]) | 2));
+    Send(a);
+  }
+
+  // ── each app's volume ──
+  static List<IAudioSessionControl2> Sessions() {
+    var en = (IMMDeviceEnumeratorAny)new MMDeviceEnumerator(); IMMDeviceAny d;
+    Marshal.ThrowExceptionForHR(en.GetDefaultAudioEndpoint(0, 1, out d));
+    var iid = typeof(IAudioSessionManager2).GUID; object o;
+    Marshal.ThrowExceptionForHR(d.Activate(ref iid, 23, IntPtr.Zero, out o));
+    IAudioSessionEnumerator e; Marshal.ThrowExceptionForHR(((IAudioSessionManager2)o).GetSessionEnumerator(out e));
+    int n; e.GetCount(out n);
+    var all = new List<IAudioSessionControl2>();
+    for (int i = 0; i < n; i++) { IAudioSessionControl2 s; if (e.GetSession(i, out s) == 0) all.Add(s); }
+    return all;
+  }
+  static string Js(string s) {
+    var b = new StringBuilder("\"");
+    foreach (char c in s ?? "") { if (c == '"' || c == '\\') b.Append('\\').Append(c); else if (c < ' ') b.Append(' '); else b.Append(c); }
+    return b.Append('"').ToString();
+  }
+  // [{pid, name, volume, muted}] of apps that have a sound session; pid 0 is Windows' own sounds
+  public static string Apps() {
+    var seen = new Dictionary<uint, bool>(); var b = new StringBuilder("[");
+    foreach (var s in Sessions()) {
+      int st; s.GetState(out st); if (st == 2) continue; // expired
+      uint pid; s.GetProcessId(out pid);
+      bool sys = s.IsSystemSoundsSession() == 0;
+      if (sys) pid = 0;
+      if (seen.ContainsKey(pid)) continue; seen[pid] = true;
+      string name = sys ? "" : null;
+      if (!sys) {
+        try {
+          var p = Process.GetProcessById((int)pid); name = p.ProcessName;
+          try { var d = p.MainModule.FileVersionInfo.FileDescription; if (!string.IsNullOrWhiteSpace(d)) name = d.Trim(); } catch { }
+        } catch { continue; } // the app is gone
+      }
+      var v = (ISimpleAudioVolume)s; float lv; bool m; v.GetMasterVolume(out lv); v.GetMute(out m);
+      if (b.Length > 1) b.Append(',');
+      b.Append("{\"pid\":").Append(pid).Append(",\"name\":").Append(Js(name)).Append(",\"volume\":").Append((int)Math.Round(lv * 100))
+        .Append(",\"muted\":").Append(m ? "true" : "false").Append('}');
+    }
+    return b.Append(']').ToString();
+  }
+  // volume -1 and mute -1 leave that one as it is
+  public static void SetApp(int pid, int volume, int mute) {
+    Guid ctx = Guid.Empty; bool found = false;
+    foreach (var s in Sessions()) {
+      uint p; s.GetProcessId(out p);
+      if (s.IsSystemSoundsSession() == 0) p = 0;
+      if (p != (uint)pid) continue;
+      found = true;
+      var v = (ISimpleAudioVolume)s;
+      if (volume >= 0) v.SetMasterVolume(Math.Min(100, volume) / 100f, ref ctx);
+      if (mute >= 0) v.SetMute(mute == 1, ref ctx);
+    }
+    if (!found) throw new Exception("Это приложение больше не играет звук");
+  }
+
+  // ── pictures: the cover of what plays, app icons, game art ──
+  [DllImport("shcore.dll")] static extern int CreateStreamOverRandomAccessStream([MarshalAs(UnmanagedType.IUnknown)] object ras, ref Guid riid, out IStream s);
+  static string Jpeg(Image img, int max) {
+    double k = Math.Min(1.0, (double)max / Math.Max(img.Width, img.Height));
+    int w = Math.Max(1, (int)(img.Width * k)), h = Math.Max(1, (int)(img.Height * k));
+    using (var small = new Bitmap(w, h)) {
+      using (var g = Graphics.FromImage(small)) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.DrawImage(img, 0, 0, w, h); }
+      var codec = Array.Find(ImageCodecInfo.GetImageEncoders(), c => c.MimeType == "image/jpeg");
+      var ps = new EncoderParameters(1); ps.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 82L);
+      using (var ms = new MemoryStream()) { small.Save(ms, codec, ps); return Convert.ToBase64String(ms.ToArray()); }
+    }
+  }
+  // a WinRT stream (the media session's thumbnail) as a JPEG no bigger than max
+  public static string Cover(object ras, int max) {
+    var iid = new Guid("0000000c-0000-0000-C000-000000000046"); IStream s;
+    Marshal.ThrowExceptionForHR(CreateStreamOverRandomAccessStream(ras, ref iid, out s));
+    var ms = new MemoryStream(); var buf = new byte[65536]; var got = Marshal.AllocHGlobal(4);
+    try {
+      while (ms.Length < 16 << 20) { s.Read(buf, buf.Length, got); int n = Marshal.ReadInt32(got); if (n <= 0) break; ms.Write(buf, 0, n); }
+    } finally { Marshal.FreeHGlobal(got); }
+    ms.Position = 0;
+    using (var img = Image.FromStream(ms)) return Jpeg(img, max);
+  }
+  public static string Picture(string path, int max) { using (var img = Image.FromFile(path)) return Jpeg(img, max); }
+  // each file's icon as a PNG ("" where there is none), one per line in and out
+  public static string Icons(string paths) {
+    var b = new StringBuilder();
+    foreach (var p in paths.Split('\n')) {
+      string r = "";
+      try {
+        using (var ic = Icon.ExtractAssociatedIcon(p)) using (var bmp = ic.ToBitmap()) using (var ms = new MemoryStream()) { bmp.Save(ms, ImageFormat.Png); r = Convert.ToBase64String(ms.ToArray()); }
+      } catch { }
+      b.Append(r).Append('\n');
+    }
+    return b.ToString();
+  }
 }
 `;
 
@@ -104,16 +275,47 @@ if (-not (Test-Path $dll)) {
   try { Move-Item -LiteralPath $tmp -Destination $dll -ErrorAction Stop } catch { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
 }
 Add-Type -Path $dll
-function Media {
-  Add-Type -AssemblyName System.Runtime.WindowsRuntime
-  $asTask = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1' } | Select-Object -First 1
-  function Await($op, $type) { $t = $asTask.MakeGenericMethod($type).Invoke($null, @($op)); $null = $t.Wait(3000); $t.Result }
+# what plays: Windows' media session (the one in the volume flyout)
+$script:asTask = $null
+function Await($op, $type) {
+  if (-not $script:asTask) {
+    Add-Type -AssemblyName System.Runtime.WindowsRuntime
+    $script:asTask = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation\`1' } | Select-Object -First 1
+  }
+  $t = $script:asTask.MakeGenericMethod($type).Invoke($null, @($op)); $null = $t.Wait(3000); $t.Result
+}
+function Session {
   $null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType = WindowsRuntime]
   $mgr = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager])
-  $s = $mgr.GetCurrentSession()
+  $mgr.GetCurrentSession()
+}
+function Props($s) { Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties]) }
+function Media {
+  $s = Session
   if (-not $s) { return $null }
-  $p = Await ($s.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
-  @{ title = $p.Title; artist = $p.Artist; app = $s.SourceAppUserModelId; playing = ($s.GetPlaybackInfo().PlaybackStatus -eq 'Playing') }
+  $p = Props $s
+  $i = $s.GetPlaybackInfo(); $t = $s.GetTimelineProperties()
+  $playing = $i.PlaybackStatus -eq 'Playing'
+  $dur = ($t.EndTime - $t.StartTime).TotalSeconds
+  $pos = ($t.Position - $t.StartTime).TotalSeconds
+  # players report the position now and then: count on from when they did
+  if ($playing -and $t.LastUpdatedTime.Year -gt 2000) { $pos += ([DateTimeOffset]::Now - $t.LastUpdatedTime).TotalSeconds }
+  @{ title = $p.Title; artist = $p.Artist; app = $s.SourceAppUserModelId; playing = $playing; cover = [bool]$p.Thumbnail
+     dur = [math]::Round([math]::Max($dur, 0), 1); pos = [math]::Round([math]::Max([math]::Min($pos, $dur), 0), 1)
+     seek = [bool]$i.Controls.IsPlaybackPositionEnabled -and $dur -gt 0 }
+}
+function Cover {
+  $s = Session
+  if (-not $s) { return $null }
+  $p = Props $s
+  if (-not $p.Thumbnail) { return $null }
+  [AR]::Cover((Await ($p.Thumbnail.OpenReadAsync()) ([Windows.Storage.Streams.IRandomAccessStreamWithContentType])), 360)
+}
+function Seek($sec) {
+  $s = Session
+  if (-not $s) { throw 'Ничего не играет' }
+  $t = $s.GetTimelineProperties()
+  if (-not (Await ($s.TryChangePlaybackPositionAsync([long](($t.StartTime.TotalSeconds + $sec) * 10000000))) ([bool]))) { throw 'Этот плеер не даёт перематывать' }
 }
 [Console]::Out.WriteLine('READY')
 while ($null -ne ($line = [Console]::In.ReadLine())) {
@@ -126,67 +328,78 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
 }
 `;
 
-let worker = null;
-let ready = null;
-let buffer = "";
-const queue = [];
+// A worker: one PowerShell with the helper loaded, running snippets one at a time.
+function makeWorker() {
+  let worker = null;
+  let ready = null;
+  let buffer = "";
+  const queue = [];
 
-function startWorker() {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  if (!fs.existsSync(DLL) && !fs.existsSync(SRC)) fs.writeFileSync(SRC, HELPER);
-  const encoded = Buffer.from(WORKER, "utf16le").toString("base64");
-  worker = cp.spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
-    { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
-  let resolveReady, rejectReady;
-  ready = new Promise((res, rej) => { resolveReady = res; rejectReady = rej; });
-  ready.catch(() => {});
-  let stderr = "";
-  worker.stderr.on("data", (d) => { stderr = (stderr + d).slice(-2000); });
-  worker.stdout.setEncoding("utf8");
-  worker.stdout.on("data", (d) => {
-    buffer += d;
-    let i;
-    while ((i = buffer.indexOf("\n")) >= 0) {
-      const line = buffer.slice(0, i).replace(/\r$/, "");
-      buffer = buffer.slice(i + 1);
-      if (line === "READY") { resolveReady(); continue; }
-      const job = queue.shift();
-      if (!job) continue;
-      if (line.startsWith("OK ")) {
-        try { job.resolve(JSON.parse(line.slice(3) || "null")); } catch { job.resolve(null); }
-      } else job.reject(new Error(line.replace(/^ERR /, "")));
-    }
-  });
-  worker.on("exit", () => {
-    const err = new Error("PowerShell worker stopped" + (stderr ? ": " + stderr.trim() : ""));
-    rejectReady(err);
-    for (const job of queue.splice(0)) job.reject(err);
-    worker = null;
-    buffer = "";
-  });
+  function startWorker() {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    if (!fs.existsSync(DLL) && !fs.existsSync(SRC)) fs.writeFileSync(SRC, HELPER);
+    const encoded = Buffer.from(WORKER, "utf16le").toString("base64");
+    worker = cp.spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+      { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    let resolveReady, rejectReady;
+    ready = new Promise((res, rej) => { resolveReady = res; rejectReady = rej; });
+    ready.catch(() => {});
+    let stderr = "";
+    worker.stderr.on("data", (d) => { stderr = (stderr + d).slice(-2000); });
+    worker.stdout.setEncoding("utf8");
+    worker.stdout.on("data", (d) => {
+      buffer += d;
+      let i;
+      while ((i = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, i).replace(/\r$/, "");
+        buffer = buffer.slice(i + 1);
+        if (line === "READY") { resolveReady(); continue; }
+        const job = queue.shift();
+        if (!job) continue;
+        if (line.startsWith("OK ")) {
+          try { job.resolve(JSON.parse(line.slice(3) || "null")); } catch { job.resolve(null); }
+        } else job.reject(new Error(line.replace(/^ERR /, "")));
+      }
+    });
+    worker.on("exit", () => {
+      const err = new Error("PowerShell worker stopped" + (stderr ? ": " + stderr.trim() : ""));
+      rejectReady(err);
+      for (const job of queue.splice(0)) job.reject(err);
+      worker = null;
+      buffer = "";
+    });
+  }
+
+  // Run one PowerShell snippet in the worker. Snippets are built here from fixed text and numbers only.
+  async function ps(script, timeoutMs = 15000) {
+    if (!worker) startWorker();
+    await ready;
+    return new Promise((resolve, reject) => {
+      const job = { resolve, reject };
+      queue.push(job);
+      const t = setTimeout(() => {
+        // a stuck request would block every later one: restart the worker
+        worker?.kill();
+        reject(new Error("timed out"));
+      }, timeoutMs);
+      job.resolve = (v) => { clearTimeout(t); resolve(v); };
+      job.reject = (e) => { clearTimeout(t); reject(e); };
+      worker.stdin.write(Buffer.from(script, "utf8").toString("base64") + "\n");
+    });
+  }
+
+  return { ps, stop() { worker?.kill(); worker = null; } };
 }
 
-// Run one PowerShell snippet in the worker. Snippets are built here from fixed text and numbers only.
-async function ps(script, timeoutMs = 15000) {
-  if (!worker) startWorker();
-  await ready;
-  return new Promise((resolve, reject) => {
-    const job = { resolve, reject };
-    queue.push(job);
-    const t = setTimeout(() => {
-      // a stuck request would block every later one: restart the worker
-      worker?.kill();
-      reject(new Error("timed out"));
-    }, timeoutMs);
-    job.resolve = (v) => { clearTimeout(t); resolve(v); };
-    job.reject = (e) => { clearTimeout(t); reject(e); };
-    worker.stdin.write(Buffer.from(script, "utf8").toString("base64") + "\n");
-  });
-}
+// The main worker, and one for the touchpad alone: a screenshot or a cover may take a moment, and
+// the pointer must not wait behind them.
+const main = makeWorker();
+const pointer = makeWorker();
+const ps = main.ps;
 
 export function stopWorker() {
-  worker?.kill();
-  worker = null;
+  main.stop();
+  pointer.stop();
 }
 
 // Start the worker (and compile the helper) ahead of the first request.
@@ -213,6 +426,69 @@ export async function setVolume({ volume: v, muted }) {
 
 export async function nowPlaying() {
   return ps("Media", 8000).catch(() => null);
+}
+
+// The cover of what plays, as a JPEG in base64 (null when the player gives none).
+export async function cover() {
+  return ps("Cover", 10000);
+}
+
+export async function seek(sec) {
+  await ps(`Seek ${Math.max(0, Math.min(360000, Number(sec) || 0)).toFixed(1)}`, 8000);
+}
+
+// Each app's own volume, as in Windows' volume mixer.
+export async function appVolumes() {
+  return JSON.parse(await ps("[AR]::Apps()"));
+}
+
+export async function setAppVolume({ pid, volume: v, muted }) {
+  const id = Math.round(Number(pid));
+  if (!Number.isFinite(id) || id < 0) throw new Error("bad pid");
+  await ps(`[AR]::SetApp(${id}, ${v === undefined ? -1 : int(v, 0, 100, 0)}, ${muted === undefined ? -1 : muted ? 1 : 0})`);
+  return appVolumes();
+}
+
+// ── the touchpad and the keyboard ───────────────────────────────────────────
+// A batch of events from the phone, run in the pointer worker as one snippet. Every number is clamped
+// here and text travels as base64, so nothing the phone sends ever becomes PowerShell code.
+//   ["m", dx, dy]  move      ["b", button, kind]  click (0) / press (1) / release (2), button 0 left 1 right 2 middle
+//   ["w", v, h]    wheel     ["t", text]          type   ["k", vk, mods]  a key, mods 1 Ctrl 2 Shift 4 Alt 8 Win
+export async function input(events) {
+  const lines = [];
+  for (const e of Array.isArray(events) ? events.slice(0, 200) : []) {
+    if (!Array.isArray(e)) continue;
+    switch (e[0]) {
+      case "m": lines.push(`[AR]::Move(${int(e[1], -4000, 4000, 0)}, ${int(e[2], -4000, 4000, 0)})`); break;
+      case "b": lines.push(`[AR]::Button(${int(e[1], 0, 2, 0)}, ${int(e[2], 0, 2, 0)})`); break;
+      case "w": lines.push(`[AR]::Wheel(${int(e[1], -2400, 2400, 0)}, ${int(e[2], -2400, 2400, 0)})`); break;
+      case "k": lines.push(`[AR]::Key(${int(e[1], 1, 254, 13)}, ${int(e[2], 0, 15, 0)})`); break;
+      case "t": {
+        const text = String(e[1] ?? "").slice(0, 2000);
+        if (text) lines.push(`[AR]::Text([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(text, "utf8").toString("base64")}')))`);
+        break;
+      }
+    }
+  }
+  // an empty batch starts the worker, so the first real touch does not wait for PowerShell
+  await pointer.ps(lines.length ? lines.join("; ") + "; $null" : "1", lines.length ? 15000 : 120000);
+}
+
+// Pictures from files (Steam's game art) and icons of shortcuts, through the main worker.
+export async function picture(file, max) {
+  return ps(`[AR]::Picture([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(String(file), "utf8").toString("base64")}')), ${int(max, 16, 1024, 256)})`);
+}
+export async function icons(files) {
+  if (!files.length) return [];
+  const list = Buffer.from(files.join("\n"), "utf8").toString("base64");
+  const out = String(await ps(`[AR]::Icons([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${list}')))`, 60000));
+  return out.split("\n").slice(0, files.length);
+}
+
+// Something from the launcher (src/apps.js): a shortcut file or a steam:// link, opened the way
+// Explorer would open it.
+export function launch(target) {
+  return run("rundll32.exe", ["url.dll,FileProtocolHandler", String(target)]);
 }
 
 // Keep the PC from sleeping on its own (so the phone can reach it from work). Held by the worker's
@@ -243,8 +519,8 @@ export async function power(what) {
     case "monitor_off": return ps("[AR]::MonitorOff()");
     // the answer must reach the phone before the machine goes down
     case "sleep": setTimeout(() => ps("[System.Windows.Forms.Application]::SetSuspendState('Suspend', $false, $false)").catch(() => {}), 1500); return;
-    case "shutdown": return run("shutdown.exe", ["/s", "/t", "60", "/c", "Astra Remote: выключение через минуту (отмена с телефона)"]);
-    case "restart": return run("shutdown.exe", ["/r", "/t", "60", "/c", "Astra Remote: перезагрузка через минуту (отмена с телефона)"]);
+    case "shutdown": return run("shutdown.exe", ["/s", "/t", "60", "/c", "Phone Remote: выключение через минуту (отмена с телефона)"]);
+    case "restart": return run("shutdown.exe", ["/r", "/t", "60", "/c", "Phone Remote: перезагрузка через минуту (отмена с телефона)"]);
     case "cancel": return run("shutdown.exe", ["/a"]);
     default: throw new Error("unknown power action");
   }
@@ -284,7 +560,7 @@ export function confirmOnPc(text, timeoutMs = 60000) {
 Add-Type -AssemblyName System.Windows.Forms
 $t = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:AR_TEXT))
 $f = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false }
-$r = [System.Windows.Forms.MessageBox]::Show($f, $t, 'Astra Remote', 'YesNo', 'Warning', 'Button2')
+$r = [System.Windows.Forms.MessageBox]::Show($f, $t, 'Phone Remote', 'YesNo', 'Warning', 'Button2')
 if ($r -eq 'Yes') { exit 0 } else { exit 1 }`;
   return new Promise((resolve) => {
     const encoded = Buffer.from(script, "utf16le").toString("base64");

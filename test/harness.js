@@ -8,7 +8,7 @@ await pc.ensureCertificate(store.PFX, store.tlsPass());
 store.setButton(1, { label: "Test button" });
 const cfg = {
   allow_chat: true, allow_screenshot: true, allow_power: true, allow_shutdown: process.env.AR_SHUTDOWN === "1", confirm_shutdown: true,
-  allow_files: true, shared_folder: process.env.AR_SHARED, max_upload_mb: 1, allow_clipboard: true, allow_open_url: true, key_days: 90
+  allow_files: true, shared_folder: process.env.AR_SHARED, max_upload_mb: 1, allow_clipboard: true, allow_open_url: true, allow_input: true, allow_launch: true, key_days: 90
 };
 const server = createServer({
   config: () => cfg,
