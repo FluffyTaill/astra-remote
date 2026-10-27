@@ -81,7 +81,17 @@ public static class AR {
   [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
   [DllImport("kernel32.dll")] static extern uint SetThreadExecutionState(uint flags);
-  static AR() { SetProcessDPIAware(); }
+  [DllImport("user32.dll")] static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
+  [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr ctx);
+  // Real pixels on every monitor, each at its own scale (-4: per-monitor v2). Aware of the system scale
+  // only, a second monitor at another scale (125% and 100%) was captured at the wrong size and place.
+  static AR() {
+    try {
+      if (!SetProcessDpiAwarenessContext((IntPtr)(-4))) SetThreadDpiAwarenessContext((IntPtr)(-4));
+    } catch (EntryPointNotFoundException) {
+      SetProcessDPIAware(); // Windows 10 before 1703
+    }
+  }
 
   // media keys are extended keys: down, then up
   public static void MediaKey(int vk) { keybd_event((byte)vk, 0, 1, UIntPtr.Zero); keybd_event((byte)vk, 0, 3, UIntPtr.Zero); }
