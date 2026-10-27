@@ -152,6 +152,13 @@ nav .badge{position:absolute;top:4px;left:calc(50% + 6px);min-width:17px;height:
 .full .top h2{flex:1;margin:0;font:700 17px/1.2 var(--mono)}
 .pad{flex:1;margin:0 14px;border-radius:var(--r-card);background:var(--card);border:1px solid var(--line);touch-action:none;display:grid;place-items:center;text-align:center;color:var(--faint);font-size:13px;line-height:1.7;padding:20px;user-select:none;-webkit-user-select:none}
 .pad.active{border-color:rgba(243,139,168,.45);background:#24252a}
+.live{margin:0 14px 8px;position:relative;border-radius:14px;overflow:hidden;background:#000;flex:none}
+.live img{display:block;max-width:100%;max-height:48vh;margin:0 auto;min-height:60px;touch-action:manipulation}
+.live .zc{position:absolute;top:6px;left:6px;display:flex;gap:4px}
+.live .zc button{padding:7px 10px;border-radius:9px;background:rgba(23,24,27,.78);border:1px solid var(--line);font:700 12px/1 var(--mono);color:var(--muted)}
+.live .zc button.on{color:var(--accent);border-color:rgba(243,139,168,.45)}
+.live .wait{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);font-size:13px}
+.full .top .icon-btn.on{background:var(--accent-soft);color:var(--accent)}
 .mbtns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 14px 0}
 .mbtns button{height:56px;border-radius:var(--r-ctl);background:var(--raised);font-weight:700;touch-action:none;user-select:none;-webkit-user-select:none}
 .mbtns button.on{background:var(--accent-soft);color:var(--accent)}
@@ -286,7 +293,7 @@ window.__forgotten = () => {
 
 // Android's back button: close what is open, else go to the first tab, else leave the app
 window.__back = () => {
-  if ($("#layer").innerHTML) { $("#layer").innerHTML = ""; return true; }
+  if ($("#layer").innerHTML) { liveStop(); $("#layer").innerHTML = ""; return true; }
   if (me.paired && filePath && tab === "files") { openDir(filePath.split("/").slice(0, -1).join("/")); return true; }
   if (me.paired && tab !== "remote") { tab = "remote"; store.set("tab", tab); render(); return true; }
   return false;
@@ -635,7 +642,10 @@ function openPad() {
   let speed = store.get("padSpeed", 1.6);
   $("#layer").innerHTML = `<div class="full">
     <div class="top"><button class="icon-btn" id="padClose" aria-label="Закрыть">${ICON.close}</button><h2>Тачпад</h2>
+      ${state?.allow?.screenshot === false ? "" : `<button class="icon-btn" id="padLive" aria-label="Экран ПК">${ICON.screen}</button>`}
       <button class="icon-btn" id="padKbd" aria-label="Клавиатура">${ICON.kbd}</button></div>
+    <div class="live" id="live" hidden><img id="liveImg" alt=""><div class="wait" id="liveWait">Загружаю экран…</div>
+      <div class="zc"><button data-z="1">Весь</button><button data-z="2">×2</button><button data-z="3">×3</button><button data-z="0">В центр</button></div></div>
     <div class="pad" id="pad"><div>Один палец — мышь, касание — клик<br>Два пальца — прокрутка<br>Касание двумя — правый клик<br>Держи «Левую» и веди пальцем — перетаскивание</div></div>
     <div class="mbtns"><button id="lmb">Левая</button><button id="rmb">Правая</button></div>
     <div class="keys">${PAD_KEYS.map((k, i) => `<button data-k="${i}">${esc(k[0])}</button>`).join("")}</div>
@@ -644,7 +654,7 @@ function openPad() {
   </div>`;
   post("/api/input", { events: [] }).catch((e) => toast(e.message)); // starts the PC's side ahead of the first touch
   let lmbDown = false;
-  const close = () => { if (lmbDown) padSend(["b", 0, 2]); $("#layer").innerHTML = ""; };
+  const close = () => { if (lmbDown) padSend(["b", 0, 2]); liveStop(); $("#layer").innerHTML = ""; };
   $("#padClose").onclick = close;
   $("#padSpeed").oninput = (e) => { speed = Number(e.target.value); store.set("padSpeed", speed); };
 
@@ -720,6 +730,80 @@ function openPad() {
     if (!cur.startsWith(Z) || cur.includes("\n") || cur.length > 80) { ta.value = Z; prev = Z; }
   };
   $("#padKbd").onclick = () => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); };
+  liveSetup();
+}
+
+// ── the live screen above the touchpad ──────────────────────────────────────
+// One frame at a time: the next is asked for when the last has come, so a slow line shows fewer
+// frames, never old ones. The PC draws a ring around the pointer (also while Windows hides it) and
+// follows it across monitors; ×2 and ×3 show the part of the screen around the pointer, larger.
+// A tap on the picture puts the pointer there and clicks.
+const live = { on: false, zoom: 1, run: 0, last: null };
+function liveStop() { live.run++; }
+function liveSetup() {
+  const btn = $("#padLive");
+  if (!btn) return;
+  live.on = store.get("padLive", true);
+  live.zoom = store.get("padZoom", 1);
+  const paintBtns = () => {
+    btn.classList.toggle("on", live.on);
+    $("#live").hidden = !live.on;
+    $("#live").querySelectorAll("[data-z]").forEach((b) => b.classList.toggle("on", Number(b.dataset.z) === live.zoom));
+  };
+  btn.onclick = () => {
+    buzz();
+    live.on = !live.on;
+    store.set("padLive", live.on);
+    paintBtns();
+    if (live.on) liveLoop(); else liveStop();
+  };
+  $("#live").querySelectorAll("[data-z]").forEach((b) => b.onclick = (e) => {
+    e.stopPropagation();
+    buzz();
+    const z = Number(b.dataset.z);
+    if (z === 0) { // the pointer to the middle of the monitor it is on
+      padSend(["p", live.last?.screen || 0, 5000, 5000]);
+      return;
+    }
+    live.zoom = z;
+    store.set("padZoom", z);
+    paintBtns();
+  });
+  const img = $("#liveImg");
+  img.onclick = (e) => {
+    const L = live.last;
+    if (!L) return;
+    const r = img.getBoundingClientRect();
+    const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
+    buzz();
+    padSend(["p", L.screen, Math.round((L.rect[0] + fx * L.rect[2]) * 10000), Math.round((L.rect[1] + fy * L.rect[3]) * 10000)]);
+    padSend(["b", 0, 0]);
+  };
+  paintBtns();
+  if (live.on) liveLoop();
+}
+async function liveLoop() {
+  const run = ++live.run;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const width = Math.min(1280, Math.round(innerWidth * (devicePixelRatio || 1)));
+  let failed = false;
+  while (run === live.run && $("#liveImg")) {
+    const t0 = Date.now();
+    if (document.hidden) { await sleep(500); continue; }
+    try {
+      const f = await getJson(`/api/screen/live?w=${width}&zoom=${live.zoom}&q=60`);
+      if (run !== live.run || !$("#liveImg")) break;
+      live.last = f;
+      $("#liveImg").src = "data:image/jpeg;base64," + f.img;
+      $("#liveWait").hidden = true;
+      failed = false;
+    } catch (e) {
+      if (!failed) toast(e.message);
+      failed = true;
+      await sleep(1500);
+    }
+    await sleep(Math.max(40, 150 - (Date.now() - t0)));
+  }
 }
 
 // ── programs and games ──────────────────────────────────────────────────────

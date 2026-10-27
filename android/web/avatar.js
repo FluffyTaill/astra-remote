@@ -29,7 +29,7 @@ function create(canvas, { onTap } = {}) {
   loader.register((p) => new VRMLoaderPlugin(p));
   loader.register((p) => new VRMAnimationLoaderPlugin(p));
 
-  let vrm = null, mixer = null, action = null, raf = 0, last = 0, t = 0;
+  let vrm = null, mixer = null, action = null, raf = 0, last = 0, t = 0, flip = 1;
   let talking = false, mouth = 0, mood = null, moodUntil = 0, blinkAt = 2, blink = 0;
   const look = new THREE.Object3D();
   scene.add(look);
@@ -53,19 +53,41 @@ function create(canvas, { onTap } = {}) {
     look.position.set(0, p.y, 1.5);
   }
 
-  // the pose between motions; it is also what a motion fades from and back to
+  // The pose between motions; it is also what a motion fades from and back to. Angles are for a VRM 1.0
+  // model, which faces +Z; a VRM 0.x one faces -Z, so its X and Z turns go the other way round
+  // (unflipped, its arms went up instead of down).
+  const FINGERS = [["Index", 0.22], ["Middle", 0.3], ["Ring", 0.38], ["Little", 0.46]];
   function idlePose(dt) {
-    const h = vrm.humanoid;
-    const b = (n) => h.getNormalizedBoneNode(n);
+    const set = (name, x, y, z) => {
+      const o = vrm.humanoid.getNormalizedBoneNode(name);
+      if (o) o.rotation.set(x * flip, y, z * flip);
+    };
     const breath = Math.sin(t * 1.6);
-    b("leftUpperArm") && b("leftUpperArm").rotation.set(0, 0, -1.22 + breath * 0.015);
-    b("rightUpperArm") && b("rightUpperArm").rotation.set(0, 0, 1.22 - breath * 0.015);
-    b("leftLowerArm") && b("leftLowerArm").rotation.set(0, 0, -0.12);
-    b("rightLowerArm") && b("rightLowerArm").rotation.set(0, 0, 0.12);
-    b("spine") && b("spine").rotation.set(breath * 0.012, Math.sin(t * 0.31) * 0.03, Math.sin(t * 0.47) * 0.015);
-    b("chest") && b("chest").rotation.set(breath * 0.02, 0, 0);
-    b("neck") && b("neck").rotation.set(0, Math.sin(t * 0.23) * 0.05, 0);
-    b("hips") && b("hips").rotation.set(0, 0, Math.sin(t * 0.47) * 0.012);
+    const sway = Math.sin(t * 0.42); // the weight going from foot to foot
+    const swing = Math.sin(t * 0.42 + 1.3); // the arms follow it a little later
+    set("hips", 0, sway * 0.04, sway * 0.025);
+    set("spine", breath * 0.015, -sway * 0.03, -sway * 0.035);
+    set("chest", breath * 0.025, Math.sin(t * 0.31) * 0.03, 0);
+    set("upperChest", breath * 0.015, 0, 0);
+    set("neck", Math.sin(t * 0.27) * 0.03, Math.sin(t * 0.23) * 0.08, sway * 0.02);
+    set("head", Math.sin(t * 0.37 + 0.5) * 0.04, Math.sin(t * 0.19) * 0.07, Math.sin(t * 0.33) * 0.05);
+    set("leftShoulder", 0, 0, 0.02 + breath * 0.012);
+    set("rightShoulder", 0, 0, -0.02 - breath * 0.012);
+    // arms down along the body, a little forward, elbows soft, hands and fingers relaxed
+    set("leftUpperArm", 0, -0.14 - swing * 0.04, -1.24 + breath * 0.02);
+    set("rightUpperArm", 0, 0.14 - swing * 0.04, 1.24 - breath * 0.02);
+    set("leftLowerArm", 0, -0.38 - swing * 0.03, 0);
+    set("rightLowerArm", 0, 0.38 - swing * 0.03, 0);
+    set("leftHand", 0, -0.08, -0.12);
+    set("rightHand", 0, 0.08, 0.12);
+    for (const [f, c] of FINGERS) {
+      set(`left${f}Proximal`, 0, 0, -c);
+      set(`left${f}Intermediate`, 0, 0, -c * 0.9);
+      set(`left${f}Distal`, 0, 0, -c * 0.6);
+      set(`right${f}Proximal`, 0, 0, c);
+      set(`right${f}Intermediate`, 0, 0, c * 0.9);
+      set(`right${f}Distal`, 0, 0, c * 0.6);
+    }
   }
 
   function expressions(dt) {
@@ -121,6 +143,7 @@ function create(canvas, { onTap } = {}) {
     v.scene.traverse((o) => { o.frustumCulled = false; });
     if (vrm) { scene.remove(vrm.scene); VRMUtils.deepDispose(vrm.scene); }
     vrm = v;
+    flip = v.meta?.metaVersion === "0" ? -1 : 1;
     scene.add(vrm.scene);
     if (vrm.lookAt) vrm.lookAt.target = look;
     t = 0;

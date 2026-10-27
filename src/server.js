@@ -125,6 +125,7 @@ export function createServer(deps) {
     if (!deps.config()[flag]) throw httpError(403, message);
   };
   const inputLogged = new Map(); // device → when its touchpad use was last written to the log
+  const liveLogged = new Map(); // the same for the live view
   const routes = {
     "GET /api/state": async (_b, dev) => {
       const cfg = deps.config();
@@ -170,6 +171,15 @@ export function createServer(deps) {
       if (Date.now() - (inputLogged.get(dev.id) || 0) > 600000) store.logAction(dev, "тачпад и клавиатура");
       inputLogged.set(dev.id, Date.now());
       return { ok: true };
+    },
+    // the touchpad's live view: the screen with the pointer ringed, as fast as the phone asks
+    "GET /api/screen/live": async (_b, dev, url) => {
+      need("allow_screenshot", "Снимок экрана выключен в настройках плагина");
+      const q = (k, d) => (url.searchParams.has(k) ? Number(url.searchParams.get(k)) : d);
+      const frame = await pc.liveFrame({ screen: q("screen", -1), width: q("w", 960), zoom: q("zoom", 1), quality: q("q", 60) });
+      if (Date.now() - (liveLogged.get(dev.id) || 0) > 600000) store.logAction(dev, "смотрит экран в тачпаде");
+      liveLogged.set(dev.id, Date.now());
+      return frame;
     },
     // the launcher: the phone sees names and ids, never paths
     "GET /api/apps": async () => {

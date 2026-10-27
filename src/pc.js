@@ -19,6 +19,7 @@ using System.Text;
 using System.Diagnostics;
 using System.Collections.Generic;
 using System.Runtime.InteropServices.ComTypes;
+using System.Globalization;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Drawing.Drawing2D;
@@ -70,6 +71,10 @@ interface ISimpleAudioVolume {
 [StructLayout(LayoutKind.Sequential)] struct KEYBDINPUT { public ushort vk, scan; public uint flags, time; public IntPtr extra; }
 [StructLayout(LayoutKind.Explicit)] struct INPUTUNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
 [StructLayout(LayoutKind.Sequential)] struct INPUT { public uint type; public INPUTUNION u; }
+// the pointer, for drawing it into the live view (a screen copy leaves it out)
+[StructLayout(LayoutKind.Sequential)] struct CPOINT { public int x, y; }
+[StructLayout(LayoutKind.Sequential)] struct CURSORINFO { public int cbSize, flags; public IntPtr hCursor; public CPOINT pt; }
+[StructLayout(LayoutKind.Sequential)] struct ICONINFO { public bool fIcon; public int xHotspot, yHotspot; public IntPtr hbmMask, hbmColor; }
 
 public static class AR {
   [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
@@ -98,6 +103,77 @@ public static class AR {
   public static void SetMute(bool m) { Marshal.ThrowExceptionForHR(Vol().SetMute(m, Guid.Empty)); }
 
   public static int Screens() { return Screen.AllScreens.Length; }
+  // monitors are numbered with the primary first, the rest in Windows' order
+  static Screen ByIndex(int index) {
+    var all = Screen.AllScreens;
+    var rest = Array.FindAll(all, x => !x.Primary);
+    return index > 0 && index <= rest.Length ? rest[index - 1] : Array.Find(all, x => x.Primary);
+  }
+  static int IndexOf(Screen s) {
+    if (s.Primary) return 0;
+    var rest = Array.FindAll(Screen.AllScreens, x => !x.Primary);
+    return Array.FindIndex(rest, x => x.DeviceName == s.DeviceName) + 1;
+  }
+
+  [DllImport("user32.dll")] static extern bool GetCursorInfo(ref CURSORINFO ci);
+  [DllImport("user32.dll")] static extern bool GetIconInfo(IntPtr h, out ICONINFO ii);
+  [DllImport("user32.dll")] static extern bool DrawIconEx(IntPtr hdc, int x, int y, IntPtr icon, int w, int h, int step, IntPtr brush, int flags);
+  [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr h);
+  [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+  static string F(double v) { return v.ToString("0.#####", CultureInfo.InvariantCulture); }
+
+  // The live view under the touchpad: the monitor the pointer is on (index -1) or a given one, the
+  // whole of it (zoom 1) or a part around the pointer (zoom 2..4), with the pointer drawn in and a
+  // ring around it — drawn even while Windows hides the pointer, so it can always be found.
+  // Answers JSON: the JPEG, which monitor, the part shown as fractions of it, the pointer in the image.
+  public static string Live(int index, int maxW, long quality, int zoom) {
+    var ci = new CURSORINFO(); ci.cbSize = Marshal.SizeOf(typeof(CURSORINFO));
+    GetCursorInfo(ref ci);
+    var s = index < 0 ? Screen.FromPoint(new Point(ci.pt.x, ci.pt.y)) : ByIndex(index);
+    var b = s.Bounds;
+    zoom = Math.Max(1, Math.Min(4, zoom));
+    int cw = b.Width / zoom, ch = b.Height / zoom;
+    int cx = zoom == 1 ? b.Left : Math.Max(b.Left, Math.Min(b.Right - cw, ci.pt.x - cw / 2));
+    int cy = zoom == 1 ? b.Top : Math.Max(b.Top, Math.Min(b.Bottom - ch, ci.pt.y - ch / 2));
+    double k = Math.Min(1.0, (double)maxW / cw);
+    int px = ci.pt.x - cx, py = ci.pt.y - cy;
+    string img;
+    using (var full = new Bitmap(cw, ch)) {
+      using (var g = Graphics.FromImage(full)) {
+        g.CopyFromScreen(cx, cy, 0, 0, new Size(cw, ch));
+        if ((ci.flags & 1) != 0 && ci.hCursor != IntPtr.Zero) {
+          ICONINFO ii; int hx = 0, hy = 0;
+          if (GetIconInfo(ci.hCursor, out ii)) {
+            hx = ii.xHotspot; hy = ii.yHotspot;
+            if (ii.hbmMask != IntPtr.Zero) DeleteObject(ii.hbmMask);
+            if (ii.hbmColor != IntPtr.Zero) DeleteObject(ii.hbmColor);
+          }
+          var hdc = g.GetHdc();
+          try { DrawIconEx(hdc, px - hx, py - hy, ci.hCursor, 0, 0, 0, IntPtr.Zero, 3); } finally { g.ReleaseHdc(hdc); }
+        }
+        // sized to stay the same on the phone whatever the scale
+        float r = (float)(20 / k), w = (float)(3.5 / k);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var dark = new Pen(Color.FromArgb(160, 0, 0, 0), w * 2)) g.DrawEllipse(dark, px - r, py - r, 2 * r, 2 * r);
+        using (var pen = new Pen(Color.FromArgb(240, 243, 139, 168), w)) g.DrawEllipse(pen, px - r, py - r, 2 * r, 2 * r);
+      }
+      int w2 = Math.Max(1, (int)(cw * k)), h2 = Math.Max(1, (int)(ch * k));
+      using (var small = new Bitmap(w2, h2)) {
+        using (var g = Graphics.FromImage(small)) { g.InterpolationMode = InterpolationMode.HighQualityBilinear; g.DrawImage(full, 0, 0, w2, h2); }
+        var codec = Array.Find(ImageCodecInfo.GetImageEncoders(), c => c.MimeType == "image/jpeg");
+        var ps = new EncoderParameters(1); ps.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
+        using (var ms = new MemoryStream()) { small.Save(ms, codec, ps); img = Convert.ToBase64String(ms.ToArray()); }
+      }
+    }
+    return "{\"img\":\"" + img + "\",\"screen\":" + IndexOf(s) + ",\"screens\":" + Screen.AllScreens.Length
+      + ",\"rect\":[" + F((double)(cx - b.Left) / b.Width) + "," + F((double)(cy - b.Top) / b.Height) + "," + F((double)cw / b.Width) + "," + F((double)ch / b.Height) + "]"
+      + ",\"cur\":[" + F((double)px / cw) + "," + F((double)py / ch) + "]}";
+  }
+  // the pointer to a point of a monitor, given as fractions of it (a tap on the live view)
+  public static void Point(int index, double fx, double fy) {
+    var b = ByIndex(index).Bounds;
+    SetCursorPos(b.Left + (int)(Math.Max(0, Math.Min(1, fx)) * (b.Width - 1)), b.Top + (int)(Math.Max(0, Math.Min(1, fy)) * (b.Height - 1)));
+  }
   // one monitor (index into AllScreens, the primary first) as a JPEG no wider than maxW
   public static string Shot(int index, int maxW, long quality) {
     var all = Screen.AllScreens;
@@ -391,15 +467,17 @@ function makeWorker() {
   return { ps, stop() { worker?.kill(); worker = null; } };
 }
 
-// The main worker, and one for the touchpad alone: a screenshot or a cover may take a moment, and
-// the pointer must not wait behind them.
+// The main worker, one for the touchpad and one for its live view: a screenshot or a cover may take
+// a moment, and the pointer must not wait behind them.
 const main = makeWorker();
 const pointer = makeWorker();
+const viewer = makeWorker();
 const ps = main.ps;
 
 export function stopWorker() {
   main.stop();
   pointer.stop();
+  viewer.stop();
 }
 
 // Start the worker (and compile the helper) ahead of the first request.
@@ -454,6 +532,7 @@ export async function setAppVolume({ pid, volume: v, muted }) {
 // here and text travels as base64, so nothing the phone sends ever becomes PowerShell code.
 //   ["m", dx, dy]  move      ["b", button, kind]  click (0) / press (1) / release (2), button 0 left 1 right 2 middle
 //   ["w", v, h]    wheel     ["t", text]          type   ["k", vk, mods]  a key, mods 1 Ctrl 2 Shift 4 Alt 8 Win
+//   ["p", screen, x, y]  the pointer to x, y of a monitor, in ten-thousandths of it
 export async function input(events) {
   const lines = [];
   for (const e of Array.isArray(events) ? events.slice(0, 200) : []) {
@@ -463,6 +542,7 @@ export async function input(events) {
       case "b": lines.push(`[AR]::Button(${int(e[1], 0, 2, 0)}, ${int(e[2], 0, 2, 0)})`); break;
       case "w": lines.push(`[AR]::Wheel(${int(e[1], -2400, 2400, 0)}, ${int(e[2], -2400, 2400, 0)})`); break;
       case "k": lines.push(`[AR]::Key(${int(e[1], 1, 254, 13)}, ${int(e[2], 0, 15, 0)})`); break;
+      case "p": lines.push(`[AR]::Point(${int(e[1], 0, 8, 0)}, ${int(e[2], 0, 10000, 5000)} / 10000.0, ${int(e[3], 0, 10000, 5000)} / 10000.0)`); break;
       case "t": {
         const text = String(e[1] ?? "").slice(0, 2000);
         if (text) lines.push(`[AR]::Text([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(text, "utf8").toString("base64")}')))`);
@@ -472,6 +552,11 @@ export async function input(events) {
   }
   // an empty batch starts the worker, so the first real touch does not wait for PowerShell
   await pointer.ps(lines.length ? lines.join("; ") + "; $null" : "1", lines.length ? 15000 : 120000);
+}
+
+// One frame of the touchpad's live view (see Live in the helper), as an object.
+export async function liveFrame({ screen = -1, width = 960, zoom = 1, quality = 60 } = {}) {
+  return JSON.parse(await viewer.ps(`[AR]::Live(${int(screen, -1, 8, -1)}, ${int(width, 320, 1920, 960)}, ${int(quality, 30, 90, 60)}, ${int(zoom, 1, 4, 1)})`, 15000));
 }
 
 // Pictures from files (Steam's game art) and icons of shortcuts, through the main worker.
