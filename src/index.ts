@@ -231,10 +231,12 @@ export const app = plugin({
     applyKeepAwake();
   },
   onShutdown: async () => {
-    clearInterval(awakeTimer);
-    relay?.stop();
-    stopServer();
-    pc.stopWorker();
+    // each step on its own: one that throws must not keep the process (and Astra's reinstall) waiting
+    for (const step of [() => clearInterval(awakeTimer), () => relay?.stop(), stopServer, pc.stopWorker]) {
+      try { step(); } catch {}
+    }
+    // and out, even if something still holds the event loop: Astra refuses a reinstall while we run
+    setTimeout(() => process.exit(0), 1500).unref();
   },
   ui: {
     contributions: [{

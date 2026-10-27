@@ -474,6 +474,9 @@ const pointer = makeWorker();
 const viewer = makeWorker();
 const ps = main.ps;
 
+// the PowerShell workers go with the plugin, however it ends
+process.on("exit", () => stopWorker());
+
 export function stopWorker() {
   main.stop();
   pointer.stop();
