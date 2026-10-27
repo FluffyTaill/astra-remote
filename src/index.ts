@@ -176,7 +176,7 @@ for (let n = 1; n <= store.BUTTON_COUNT; n++) {
 }
 
 export const app = plugin({
-  id: "astra-remote",
+  id: "phone-remote",
   triggers,
   tools: {
     send_file_to_phone: tool({

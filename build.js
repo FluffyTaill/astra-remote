@@ -1,4 +1,4 @@
-// Builds dist/index.js, MANIFEST.json and astra-remote.astraplugin. Run: node build.js
+// Builds dist/index.js, MANIFEST.json and the .astraplugin. Run: node build.js
 // The bundle is one file with everything inside (the catalogue rejects one that loads modules at run
 // time); the phone app is bundled into it as text. The .astraplugin is a zip whose MANIFEST.json is
 // stored, not compressed, and every file is 0644.
