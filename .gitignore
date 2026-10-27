@@ -8,3 +8,4 @@ android/*.apk
 android/*.apk.idsig
 android/release.keystore
 android/keystore.properties
+.wrangler/
