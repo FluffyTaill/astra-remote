@@ -1,0 +1,4 @@
+Nunito (c) The Nunito Project Authors (https://github.com/googlefonts/nunito)
+JetBrains Mono (c) The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)
+Both are licensed under the SIL Open Font License, Version 1.1: https://openfontlicense.org
+Taken from Google Fonts (Cyrillic and Latin subsets).

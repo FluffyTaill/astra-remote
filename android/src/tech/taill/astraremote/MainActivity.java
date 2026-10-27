@@ -22,6 +22,7 @@ import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -30,8 +31,14 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * One screen: a WebView with the app's page from assets, which reaches the PC only through {@link Bridge}.
@@ -39,9 +46,12 @@ import java.util.List;
  * phone's way (fingerprint, face, PIN).
  */
 public final class MainActivity extends Activity {
-    private static final int REQ_SCAN = 1, REQ_PICK = 2, REQ_UNLOCK = 3, REQ_STORAGE = 4;
+    private static final int REQ_SCAN = 1, REQ_PICK = 2, REQ_UNLOCK = 3, REQ_STORAGE = 4, REQ_SPEECH = 5, REQ_NOTIFY = 6;
     private static final long LOCK_AFTER_MS = 60_000;
-    private static final int BG = 0xff0e1017;
+    private static final int BG = 0xff17181b;
+    // The page's own origin. Nothing behind it is online: every request to it is answered here, from the
+    // app's assets or its private avatar folder, and any other address is refused (see intercept()).
+    static final String HOST = "appassets.androidplatform.net";
 
     private WebView web;
     private Bridge bridge;
@@ -52,13 +62,55 @@ public final class MainActivity extends Activity {
     private Intent pendingShare;
     private Runnable afterStorage;
 
+    // A crash is written down and shown on the next start, so it can be reported without a cable and logcat.
+    private static final String CRASH = "crash.txt";
+
+    private void watchCrashes() {
+        final Thread.UncaughtExceptionHandler next = Thread.getDefaultUncaughtExceptionHandler();
+        final File f = new File(getFilesDir(), CRASH);
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            try (java.io.PrintWriter w = new java.io.PrintWriter(new java.io.FileWriter(f))) {
+                w.println("Astra Remote " + BuildInfo.version(this) + ", Android " + Build.VERSION.RELEASE + ", " + Build.MANUFACTURER + " " + Build.MODEL);
+                e.printStackTrace(w);
+            } catch (Exception ignored) {
+            }
+            if (next != null) next.uncaughtException(t, e);
+        });
+    }
+
+    private void showLastCrash() {
+        File f = new File(getFilesDir(), CRASH);
+        if (!f.isFile()) return;
+        String text;
+        try (InputStream in = new FileInputStream(f)) {
+            text = new String(Pinned.readAll(in), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            text = String.valueOf(e);
+        }
+        //noinspection ResultOfMethodCallIgnored
+        f.delete();
+        final String report = text;
+        new android.app.AlertDialog.Builder(this)
+                .setTitle("Прошлый запуск завершился ошибкой")
+                .setMessage("Отправь этот текст разработчику — по нему видно, что сломалось.\n\n" + report.substring(0, Math.min(report.length(), 2500)))
+                .setPositiveButton("Скопировать", (d, w) -> {
+                    android.content.ClipboardManager cm = getSystemService(android.content.ClipboardManager.class);
+                    if (cm != null) cm.setPrimaryClip(android.content.ClipData.newPlainText("Astra Remote crash", report));
+                })
+                .setNegativeButton("Закрыть", null)
+                .show();
+    }
+
     @Override
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
-        // the PC's screenshots and chat stay out of the recent-apps preview and screen recordings
-        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        watchCrashes();
+        settings = getSharedPreferences("settings", MODE_PRIVATE);
+        // the PC's screenshots and chat stay out of the recent-apps preview and screen recordings,
+        // unless the owner allowed screenshots of the app in its settings
+        applySecure();
         getWindow().setStatusBarColor(BG);
-        getWindow().setNavigationBarColor(0xff171a24);
+        getWindow().setNavigationBarColor(BG);
         settings = getSharedPreferences("settings", MODE_PRIVATE);
 
         FrameLayout root = new FrameLayout(this);
@@ -80,7 +132,8 @@ public final class MainActivity extends Activity {
         s.setDomStorageEnabled(true);
         s.setAllowFileAccess(false); // file:///android_asset/ still loads; nothing else on the phone does
         s.setAllowContentAccess(false);
-        s.setBlockNetworkLoads(true); // the page itself never goes online
+        // the page never goes online: whatever it asks for is answered in intercept(), and that refuses
+        // every address but the app's own (three.js needs a real https origin to load the avatar)
         s.setGeolocationEnabled(false);
         s.setSupportMultipleWindows(false);
         s.setSupportZoom(false);
@@ -88,6 +141,11 @@ public final class MainActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 return true; // the page is the whole app: no navigating away
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                return intercept(request.getUrl());
             }
         });
         web.setWebChromeClient(new WebChromeClient()); // confirm() dialogs
@@ -101,9 +159,10 @@ public final class MainActivity extends Activity {
 
         locked = lockEnabled() && lockAvailable();
         cover.setVisibility(locked ? View.VISIBLE : View.GONE);
-        web.loadUrl("file:///android_asset/index.html");
+        web.loadUrl("https://" + HOST + "/assets/index.html");
         if (locked) unlock();
         handleShare(getIntent());
+        showLastCrash();
     }
 
     @Override
@@ -161,6 +220,35 @@ public final class MainActivity extends Activity {
     }
 
     // ── app lock ────────────────────────────────────────────────────────────
+
+    boolean screenshotsAllowed() {
+        return settings.getBoolean("shots", false);
+    }
+
+    void setScreenshotsAllowed(boolean on) {
+        settings.edit().putBoolean("shots", on).apply();
+        applySecure();
+    }
+
+    private void applySecure() {
+        if (screenshotsAllowed()) getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        else getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+    }
+
+    /** The phone's own folder for files from the PC (Downloads/Astra Remote), in its file manager. */
+    void openPhoneFolder() {
+        Uri dir = android.provider.DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Download/Astra Remote");
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(dir, "vnd.android.document/directory")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(android.app.DownloadManager.ACTION_VIEW_DOWNLOADS));
+            } catch (Exception ignored) {
+                android.widget.Toast.makeText(this, "Файлы с ПК лежат в «Загрузки/Astra Remote»", android.widget.Toast.LENGTH_LONG).show();
+            }
+        }
+    }
 
     boolean lockEnabled() {
         return settings.getBoolean("lock", true);
@@ -246,10 +334,68 @@ public final class MainActivity extends Activity {
         }
     }
 
+    // ── the page's files ────────────────────────────────────────────────────
+
+    private static String mime(String path) {
+        String p = path.toLowerCase();
+        if (p.endsWith(".html")) return "text/html";
+        if (p.endsWith(".js")) return "text/javascript";
+        if (p.endsWith(".css")) return "text/css";
+        if (p.endsWith(".woff2")) return "font/woff2";
+        if (p.endsWith(".svg")) return "image/svg+xml";
+        return "application/octet-stream";
+    }
+
+    private WebResourceResponse respond(int code, String type, InputStream body) {
+        Map<String, String> h = new HashMap<>();
+        h.put("Cache-Control", "no-store");
+        String reason = code == 200 ? "OK" : code == 404 ? "Not Found" : "Forbidden";
+        return new WebResourceResponse(type, code == 200 && type.startsWith("text/") ? "utf-8" : null, code, reason, h,
+                body != null ? body : new ByteArrayInputStream(new byte[0]));
+    }
+
+    /** https://HOST/assets/… from the APK, https://HOST/avatar/… from the private folder; nothing else. */
+    WebResourceResponse intercept(Uri u) {
+        if (!"https".equals(u.getScheme()) || !HOST.equals(u.getHost()) || u.getPath() == null) return respond(403, "text/plain", null);
+        String path = u.getPath();
+        try {
+            if (path.startsWith("/assets/") && !path.contains("..")) {
+                String rel = path.substring("/assets/".length());
+                return respond(200, mime(rel), getAssets().open(rel));
+            }
+            if (path.startsWith("/avatar/")) {
+                File f = bridge.avatarFile(path.substring("/avatar/".length()));
+                if (f != null && f.isFile()) return respond(200, mime(f.getName()), new FileInputStream(f));
+            }
+        } catch (Exception ignored) {
+        }
+        return respond(404, "text/plain", null);
+    }
+
     // ── other screens ───────────────────────────────────────────────────────
 
     void startScan() {
         startActivityForResult(new Intent(this, ScanActivity.class), REQ_SCAN);
+    }
+
+    /** Speech to text with the phone's own recogniser (Google's, as a rule); the app needs no microphone permission. */
+    void startListen() {
+        Intent i = new Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE, "ru-RU")
+                .putExtra(android.speech.RecognizerIntent.EXTRA_PROMPT, "Скажи Astra");
+        try {
+            startActivityForResult(i, REQ_SPEECH);
+        } catch (Exception e) {
+            bridge.onHeard(null, "На телефоне нет распознавания речи (нужно приложение Google)");
+        }
+    }
+
+    /** Android 13+ asks before an app may post notifications. */
+    void askNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFY);
+        }
     }
 
     void startPick() {
@@ -293,6 +439,10 @@ public final class MainActivity extends Activity {
             if (!uris.isEmpty()) bridge.upload(uris);
         } else if (requestCode == REQ_UNLOCK) {
             if (resultCode == RESULT_OK) unlocked();
+        } else if (requestCode == REQ_SPEECH) {
+            ArrayList<String> heard = resultCode == RESULT_OK && data != null
+                    ? data.getStringArrayListExtra(android.speech.RecognizerIntent.EXTRA_RESULTS) : null;
+            bridge.onHeard(heard == null || heard.isEmpty() ? null : heard.get(0), null);
         }
     }
 

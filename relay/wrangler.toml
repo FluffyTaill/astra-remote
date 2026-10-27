@@ -1,0 +1,13 @@
+# Astra Remote relay. Deploy: npx wrangler login, then npx wrangler deploy (in this folder).
+name = "astra-remote-relay"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+
+[[durable_objects.bindings]]
+name = "PC"
+class_name = "PcRoom"
+
+# SQLite-backed Durable Objects are what the Workers Free plan offers
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PcRoom"]

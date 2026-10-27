@@ -50,6 +50,30 @@ function save() {
 
 export const tlsPass = () => load().tls.pass;
 
+// The relay this PC uses, as set on the plugin page ("" = none). Each user runs their own (relay/README.md).
+const RELAY_FILE = path.join(DATA_DIR, "relay.json");
+export function relayUrlSaved() {
+  try {
+    return String(JSON.parse(fs.readFileSync(RELAY_FILE, "utf8")).url || "");
+  } catch {
+    return "";
+  }
+}
+export function saveRelayUrl(url) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(RELAY_FILE, JSON.stringify({ url: String(url || "") }, null, 2));
+}
+
+// This PC on the relay: the id phones ask for, and the key only this PC knows (the relay keeps its hash).
+export function relayIdentity() {
+  load();
+  if (!db.relay) {
+    db.relay = { id: crypto.randomBytes(16).toString("hex"), key: crypto.randomBytes(32).toString("hex") };
+    save();
+  }
+  return db.relay;
+}
+
 // ── pairing ─────────────────────────────────────────────────────────────────
 // The secret is only in the QR code on the plugin page; a phone that has it still gets no key until
 // the owner presses "Allow" on that page.
@@ -200,6 +224,21 @@ export function addSent(items) {
 
 export function sent() {
   return load().sent || [];
+}
+
+// ── notes for the phone ─────────────────────────────────────────────────────
+// What Astra asked to tell the phone (the notify_phone tool), newest first. The app shows each as an
+// Android notification once: it remembers the newest id it has seen.
+export function addNote(title, text) {
+  const d = load();
+  const id = (d.notes?.[0]?.id || 0) + 1;
+  d.notes = [{ id, title: String(title || "Astra").slice(0, 80), text: String(text || "").slice(0, 1000), at: new Date().toISOString() }, ...(d.notes || [])].slice(0, 50);
+  save();
+  return id;
+}
+
+export function notes() {
+  return load().notes || [];
 }
 
 // ── action log ──────────────────────────────────────────────────────────────

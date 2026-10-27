@@ -15,6 +15,38 @@ const ago = (iso) => {
   return new Date(iso).toLocaleDateString();
 };
 
+// Astra's plugin pages run in a frame where alert/confirm/prompt are blocked (confirm() just says
+// "Cancel"), so the page asks and reports inline instead.
+function flash(text) {
+  let t = $("#flash");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "flash";
+    t.className = "status bad";
+    t.style.cssText = "position:fixed;left:16px;right:16px;bottom:16px;z-index:10";
+    document.body.appendChild(t);
+  }
+  t.textContent = text;
+  t.hidden = false;
+  clearTimeout(flash.t);
+  flash.t = setTimeout(() => { t.hidden = true; }, 5000);
+}
+
+// first click turns the button into "are you sure?", a second one within 4 s does it
+function twoStep(btn, question, action) {
+  btn.onclick = async () => {
+    if (btn.dataset.armed) {
+      delete btn.dataset.armed;
+      await action();
+      return;
+    }
+    const label = btn.textContent;
+    btn.dataset.armed = "1";
+    btn.textContent = question;
+    setTimeout(() => { if (btn.dataset.armed) { delete btn.dataset.armed; btn.textContent = label; } }, 4000);
+  };
+}
+
 function setHtml(el, html) {
   if (el.dataset.html === html) return false;
   el.dataset.html = html;
@@ -35,6 +67,7 @@ async function load() {
 
 function paint() {
   paintServer();
+  paintRelay();
   paintPair();
   paintRequests();
   paintDevices();
@@ -42,13 +75,65 @@ function paint() {
   paintLog();
 }
 
+// Away from home: the relay (on by default), or Tailscale; say what works and what is missing
+function remoteHint(s, addrs) {
+  const r = s.relay;
+  const awake = s.config?.keep_awake ? "ПК не уходит в сон, пока подключён телефон."
+    : "Чтобы ПК был доступен, он не должен спать: включи «Не уходить в сон, пока подключён телефон» в настройках плагина.";
+  if (r && r.status === "online") {
+    return `<div class="status ok" style="margin-top:8px"><b>Вне дома</b>: работает через ретранслятор (${esc(r.url.replace(/^wss:\/\//, ""))}) — телефон достаёт ПК откуда угодно, без Tailscale и открытых портов. ${awake}</div>`;
+  }
+  if (r) {
+    return `<div class="status warn" style="margin-top:8px"><b>Вне дома</b>: ретранслятор ${r.status === "connecting" ? "подключается…" : "недоступен"}${r.error ? ` — ${esc(r.error)}` : ""}. Дома телефон работает и без него.</div>`;
+  }
+  const ts = addrs.find((a) => a.tailscale);
+  return ts
+    ? `<div class="status ok" style="margin-top:8px"><b>Вне дома</b>: через Tailscale (${esc(ts.address)}). ${awake}</div>`
+    : '<div class="status warn" style="margin-top:8px"><b>Вне дома</b>: выключено — разверни свой ретранслятор (карточка ниже), и телефон будет работать откуда угодно.</div>';
+}
+
+// ── the relay card: each user runs their own (relay/README.md) ──────────────
+const DEPLOY = "https://deploy.workers.cloudflare.com/?url=https://github.com/FluffyTaill/astra-remote/tree/main/relay";
+function paintRelay() {
+  const box = $("#relayCard");
+  if (!box) return;
+  const r = state.relay;
+  const status = !r ? '<span class="muted">не настроен — вне дома телефон не достанет ПК</span>'
+    : r.status === "online" ? '<b style="color:var(--ok,#a6cf8a)">работает</b>'
+    : `<b style="color:var(--warn,#f1c95b)">${r.status === "connecting" ? "подключается…" : "недоступен"}</b>${r.error ? ` <span class="muted">— ${esc(r.error)}</span>` : ""}`;
+  if (!setHtml(box, `<h2>Вне дома: свой ретранслятор</h2>
+    <p class="muted" style="margin:0 0 10px">Чтобы телефон доставал ПК откуда угодно (без Tailscale и открытых портов), нужен ретранслятор —
+      свой у каждого, бесплатно на Cloudflare. Он только передаёт данные: внутри та же защищённая связь с ПК.</p>
+    <ol class="muted" style="margin:0 0 10px;padding-left:18px">
+      <li>Нажми «Развернуть на Cloudflare», войди в Cloudflare (или заведи бесплатный аккаунт) и подтверди.</li>
+      <li>Скопируй адрес ретранслятора (<code>https://astra-remote-relay.…workers.dev</code>) сюда и нажми «Сохранить».</li>
+      <li>Открой приложение на телефоне дома — оно само узнает адрес.</li></ol>
+    <div class="row" style="gap:8px;flex-wrap:wrap">
+      <button class="btn" id="relayDeploy">Развернуть на Cloudflare</button>
+      <input id="relayUrl" style="flex:1;min-width:240px" placeholder="https://astra-remote-relay.имя.workers.dev" value="${esc((r?.url || "").replace(/^wss:/, "https:"))}">
+      <button class="btn primary" id="relaySave">Сохранить</button></div>
+    <p style="margin:10px 0 0">Сейчас: ${status}</p>
+    <p class="muted" style="margin:6px 0 0;font-size:12px">Номер этого ПК: <code>${esc(state.relayId || "")}</code> — чтобы закрыть ретранслятор для чужих, впиши его в секрет ALLOWED_PCS (подробно — в relay/README.md).</p>`)) return;
+  // the page lives in Astra's sandboxed frame, where a link cannot open a window: the plugin opens it in the browser
+  $("#relayDeploy").onclick = () => call("openUrl", { url: DEPLOY }).catch((e) => flash(e.message || String(e)));
+  $("#relaySave").onclick = async () => {
+    try {
+      state = await call("setRelay", { url: $("#relayUrl").value });
+      paint();
+      flash($("#relayUrl").value.trim() ? "Сохранено — ПК подключается к ретранслятору" : "Ретранслятор выключен");
+    } catch (e) {
+      flash(e.message || String(e));
+    }
+  };
+}
+
 function paintServer() {
   const s = state;
   const addrs = s.addresses || [];
-  setHtml($("#server"), s.error
-    ? `<div class="status bad">${esc(s.error)}</div>`
+  setHtml($("#server"), s.serverError
+    ? `<div class="status bad">${esc(s.serverError)}</div>`
     : s.port
-      ? `<div class="status ok">Работает на порту <b>${s.port}</b> (HTTPS) · ${addrs.map((a) => `${esc(a.address)}${a.tailscale ? " (Tailscale)" : ""}`).join(", ") || "нет сети"}. Если приложение не подключается, разреши Node.js в брандмауэре Windows для частных сетей.</div>`
+      ? `<div class="status ok">Работает на порту <b>${s.port}</b> (HTTPS) · ${addrs.map((a) => `${esc(a.address)}${a.tailscale ? " (Tailscale)" : ""}`).join(", ") || "нет сети"}. Если приложение не подключается, разреши Node.js в брандмауэре Windows.</div>${remoteHint(s, addrs)}`
       : '<div class="status warn">Сервер запускается…</div>');
   const ctl = $("#pairControls");
   if (setHtml(ctl, qr ? '<button class="btn" id="cancel">Отменить</button>' : `<button class="btn primary" id="start" ${s.port && addrs.length ? "" : "disabled"}>Подключить телефон</button>`)) {
@@ -59,7 +144,7 @@ function paintServer() {
         qr = r.qr;
         paint();
       } catch (e) {
-        alert(e.message || e);
+        flash(e.message || String(e));
       }
     };
     if ($("#cancel")) $("#cancel").onclick = async () => { qr = ""; state = await call("cancelPairing"); paint(); };
@@ -87,16 +172,17 @@ function paintRequests() {
       <span style="flex:1"></span>
       <button class="btn primary" data-allow="${r.id}">Разрешить</button>
       <button class="btn danger" data-deny="${r.id}">Отклонить</button></div>`).join(""))) {
+    // the 4-digit code is right next to the button: comparing it with the phone is the confirmation
     box.querySelectorAll("[data-allow],[data-deny]").forEach((b) => b.onclick = async () => {
       const allow = !!b.dataset.allow;
       const id = b.dataset.allow || b.dataset.deny;
-      if (allow) {
-        const r = list.find((x) => x.id === id);
-        if (!confirm(`Разрешить «${r.name}» доступ к этому ПК?\n\nНа экране телефона должен быть код ${r.check}. Если кода нет или он другой — нажми «Отмена».`)) return;
+      try {
+        state = await call("answerPairing", { id, allow });
+        if (allow) qr = "";
+        paint();
+      } catch (e) {
+        flash(e.message || String(e));
       }
-      state = await call("answerPairing", { id, allow });
-      if (allow) qr = "";
-      paint();
     });
   }
 }
@@ -110,20 +196,36 @@ function paintDevices() {
         <td>${ago(d.lastSeen)}</td><td class="muted">${esc(d.lastIp)}</td>
         <td style="text-align:right;white-space:nowrap"><button class="btn small" data-rename="${d.id}">Переименовать</button> <button class="btn small danger" data-revoke="${d.id}">Отключить</button></td></tr>`).join("")}</tbody></table>`
     : '<p class="muted" style="margin:0">Пока ни одного. Нажми «Подключить телефон».</p>';
-  setHtml($("#folder"), state.folder ? `<p class="muted" style="margin:10px 0 0">Общая папка для файлов: <b>${esc(state.folder)}</b> — с телефона файлы приходят в «С телефона», Astra кладёт файлы для телефона в «Для телефона».</p>` : "");
+  if (setHtml($("#folder"), state.folder ? `<p class="muted" style="margin:10px 0 0">Общая папка для файлов: <b>${esc(state.folder)}</b> — с телефона файлы приходят в «С телефона», Astra кладёт файлы для телефона в «Для телефона».
+      <button class="btn small" id="openFolder" style="margin-left:6px">Открыть папку</button></p>` : "") && $("#openFolder")) {
+    $("#openFolder").onclick = () => call("openFolder").catch((e) => flash(e.message || String(e)));
+  }
   if (!setHtml(box, html)) return;
-  box.querySelectorAll("[data-revoke]").forEach((b) => b.onclick = async () => {
-    const d = list.find((x) => x.id === b.dataset.revoke);
-    if (!confirm(`Отключить «${d.name}»? Ему придётся подключаться заново.`)) return;
-    state = await call("revoke", { id: d.id });
+  box.querySelectorAll("[data-revoke]").forEach((b) => twoStep(b, "Точно отключить?", async () => {
+    state = await call("revoke", { id: b.dataset.revoke });
     paint();
-  });
-  box.querySelectorAll("[data-rename]").forEach((b) => b.onclick = async () => {
+  }));
+  box.querySelectorAll("[data-rename]").forEach((b) => b.onclick = () => {
     const d = list.find((x) => x.id === b.dataset.rename);
-    const name = prompt("Имя устройства", d.name);
-    if (!name) return;
-    state = await call("updateDevice", { id: d.id, patch: { name } });
-    paint();
+    const cell = b.closest("tr").querySelector("td b");
+    const input = document.createElement("input");
+    input.value = d.name;
+    input.maxLength = 40;
+    input.style.cssText = "font:inherit;width:160px";
+    cell.replaceWith(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = async (save) => {
+      if (done) return;
+      done = true;
+      const name = input.value.trim();
+      if (save && name && name !== d.name) state = await call("updateDevice", { id: d.id, patch: { name } });
+      box.dataset.html = ""; // force a repaint of the list
+      paint();
+    };
+    input.onkeydown = (e) => { if (e.key === "Enter") finish(true); if (e.key === "Escape") finish(false); };
+    input.onblur = () => finish(true);
   });
 }
 
@@ -147,7 +249,7 @@ function paintButtons() {
       tr.querySelector("[data-test]").onclick = async (e) => {
         const btn = e.currentTarget;
         btn.textContent = "…";
-        try { await call("testButton", { n }); btn.textContent = "Сработало"; } catch (err) { btn.textContent = "Ошибка"; alert(err.message || err); }
+        try { await call("testButton", { n }); btn.textContent = "Сработало"; } catch (err) { btn.textContent = "Ошибка"; flash(err.message || String(err)); }
         setTimeout(() => { btn.textContent = "Проверить"; }, 1600);
       };
     });

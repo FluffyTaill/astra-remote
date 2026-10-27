@@ -50,6 +50,13 @@ export function list(cfg, rel) {
   return { root: path.basename(base), folder: base, path: clean, items: items.slice(0, 500), maxBytes: maxBytes(cfg) };
 }
 
+// A folder inside the shared one, for opening it in Explorer on the PC.
+export function resolveDir(cfg, rel) {
+  const { full } = inside(root(cfg), rel);
+  if (!fs.statSync(full).isDirectory()) throw httpError(400, "Это не папка");
+  return full;
+}
+
 export function openForDownload(cfg, rel) {
   const { full } = inside(root(cfg), rel);
   const st = fs.statSync(full);

@@ -10,7 +10,9 @@ import * as https from "node:https";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ar-test-"));
 const out = path.join(dir, "server.mjs");
 execFileSync(process.execPath, [path.join("node_modules", "esbuild", "bin", "esbuild"), "test/harness.js", "--bundle", "--platform=node",
-  "--format=esm", "--outfile=" + out], { stdio: "pipe" });
+  "--format=esm", "--outfile=" + out,
+  // ws (the relay) is CommonJS inside: an ESM bundle needs a real require for its built-ins
+  "--banner:js=import{createRequire}from'module';const require=createRequire(import.meta.url);"], { stdio: "pipe" });
 
 const shared = path.join(dir, "shared");
 
@@ -163,4 +165,14 @@ test("Astra sends a file or a folder to the phone", async () => {
   fs.writeFileSync(inside, "x");
   assert.deepEqual(files.offer(cfg, inside).map((x) => x.path), ["С телефона/x.txt"], "already shared: not copied");
   assert.throws(() => files.offer(cfg, path.join(dir, "nope")), /Нет такого/);
+});
+
+test("state tells the app where the PC is now", async (t) => {
+  const { p, port, secret, fp } = await start();
+  t.after(() => p.kill());
+  const call = client(port, fp);
+  const token = (await pairAs(call, secret, "Away")).json.token;
+  const st = (await call("GET", "/api/state", null, token)).json;
+  assert.ok(Array.isArray(st.endpoints));
+  for (const a of st.endpoints) assert.match(a, /^\d+\.\d+\.\d+\.\d+$/);
 });

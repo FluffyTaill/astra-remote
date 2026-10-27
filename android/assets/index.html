@@ -5,91 +5,107 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Astra Remote</title>
 <style>
-:root{--bg:#0e1017;--card:#171a24;--raised:#1f2331;--line:#ffffff14;--text:#eceef5;--muted:#8b92a6;
-  --accent:#8b7cff;--accent-soft:#8b7cff2a;--bad:#ff6b81;--bad-soft:#ff6b8122;--ok:#3ccf91}
+/* Astra's own look: its dark theme, the strawberry accent, Nunito for text and JetBrains Mono for titles */
+@import url(fonts/fonts.css);
+:root{--bg:#17181b;--card:#212226;--raised:#2c2d32;--raised-hover:#35363c;--line:rgba(255,255,255,.08);--line-strong:rgba(255,255,255,.15);
+  --text:#ececef;--muted:rgba(236,236,239,.66);--faint:rgba(236,236,239,.45);
+  --accent:#f38ba8;--accent-soft:rgba(243,139,168,.16);--on-accent:#1d1b26;
+  --bad:#f2846f;--bad-soft:rgba(242,132,111,.15);--ok:#a6cf8a;--ok-soft:rgba(166,207,138,.15);--warn:#f1c95b;
+  --mono:'JetBrains Mono',ui-monospace,monospace;--sans:Nunito,system-ui,Roboto,sans-serif;
+  --r-card:22px;--r-ctl:14px;--r-pill:999px}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:15px/1.4 Inter,system-ui,Roboto,sans-serif}
+html,body{margin:0;height:100%;color:var(--text);font:15px/1.45 var(--sans)}
+/* the faint doodles of Astra's background */
+body{background-color:var(--bg);background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220' fill='none' stroke='%23ffffff' stroke-opacity='.045' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M30 44c-6-8-18-2-12 8l12 12 12-12c6-10-6-16-12-8z'/%3E%3Cpath d='M150 30l4 10 10 4-10 4-4 10-4-10-10-4 10-4z'/%3E%3Cpath d='M170 150a10 10 0 1 1-10-10 6 6 0 1 1-6 6'/%3E%3Cpath d='M40 160l10 10M50 160l-10 10M62 160l10 10M72 160l-10 10'/%3E%3Cpath d='M110 100q8-10 16 0t16 0'/%3E%3Cpath d='M96 196v-14M96 202v1'/%3E%3C/svg%3E")}
 button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
 input,textarea{font:inherit;color:inherit}
 .app{display:flex;flex-direction:column;height:100%;max-width:640px;margin:0 auto}
-header{display:flex;align-items:center;gap:10px;padding:12px 16px 10px}
-header h1{font-size:18px;margin:0;font-weight:650;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:none}
-.dot.on{background:var(--ok);box-shadow:0 0 0 4px #3ccf9122}
-.dot.off{background:var(--bad)}
-main{flex:1;overflow-y:auto;padding:4px 16px 16px}
-nav{display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);background:var(--card)}
-nav button{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 0 8px;font-size:11.5px;color:var(--muted)}
-nav button svg{width:23px;height:23px}
-nav button.on{color:var(--accent)}
-nav .badge{position:absolute;top:5px;left:calc(50% + 6px);min-width:17px;height:17px;border-radius:9px;background:var(--bad);color:#fff;font-size:11px;line-height:17px;padding:0 4px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:12px}
-.card h2{font-size:12.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px;font-weight:600}
+header{display:flex;align-items:center;gap:10px;padding:14px 18px 10px}
+header h1{font:700 17px/1.2 var(--mono);margin:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:-.01em}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--faint);flex:none}
+.dot.on{background:var(--ok);box-shadow:0 0 0 4px var(--ok-soft)}
+.dot.off{background:var(--bad);box-shadow:0 0 0 4px var(--bad-soft)}
+.via{font:600 11px/1 var(--mono);color:var(--muted);background:var(--raised);border-radius:var(--r-pill);padding:5px 9px}
+main{flex:1;overflow-y:auto;padding:4px 14px 16px}
+/* the bottom bar: Astra's pill-shaped navigation */
+nav{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin:6px 10px 10px;padding:5px;background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);box-shadow:0 8px 24px #0006}
+nav button{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0 7px;font:600 11px/1 var(--mono);color:var(--muted);border-radius:16px;transition:background .15s,color .15s}
+nav button svg{width:22px;height:22px}
+nav button.on{color:var(--text);background:var(--raised)}
+nav button.on svg{color:var(--accent)}
+nav .badge{position:absolute;top:4px;left:calc(50% + 6px);min-width:17px;height:17px;border-radius:9px;background:var(--accent);color:var(--on-accent);font:700 11px/17px var(--sans);padding:0 4px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-card);padding:16px;margin-bottom:12px}
+.card h2{font:700 12px/1.2 var(--mono);text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 12px}
 .row{display:flex;align-items:center;gap:10px}
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.stat{background:var(--raised);border-radius:12px;padding:10px;text-align:center}
-.stat b{display:block;font-size:20px;font-variant-numeric:tabular-nums}
+.stat{background:var(--raised);border-radius:var(--r-ctl);padding:10px 6px;text-align:center}
+.stat b{display:block;font:700 19px/1.25 var(--mono);font-variant-numeric:tabular-nums}
 .stat span{font-size:12px;color:var(--muted)}
 .np{min-height:42px;margin-bottom:10px}
-.np .t{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.np .t{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .np .a{color:var(--muted);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .transport{display:flex;justify-content:center;gap:18px}
 .round{width:54px;height:54px;border-radius:50%;background:var(--raised);display:grid;place-items:center}
-.round.big{width:64px;height:64px;background:var(--accent);color:#fff}
+.round:active{background:var(--raised-hover)}
+.round.big{width:64px;height:64px;background:var(--accent);color:var(--on-accent)}
 .round svg{width:24px;height:24px}
 .vol{display:flex;align-items:center;gap:12px;margin-top:14px}
 .vol input{flex:1;accent-color:var(--accent);height:28px}
-.vol .n{width:36px;text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
-.icon-btn{width:40px;height:40px;border-radius:12px;background:var(--raised);display:grid;place-items:center;flex:none}
+.vol .n{width:36px;text-align:right;font:600 13px var(--mono);color:var(--muted)}
+.icon-btn{width:40px;height:40px;border-radius:var(--r-ctl);background:var(--raised);display:grid;place-items:center;flex:none}
 .icon-btn svg{width:21px;height:21px}
-.icon-btn.on{background:var(--bad-soft);color:var(--bad)}
+.icon-btn.on{background:var(--accent-soft);color:var(--accent)}
 .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
-.tile{background:var(--raised);border-radius:14px;padding:14px 6px;min-height:78px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-align:center;font-size:13.5px;transition:transform .08s}
-.tile:active{transform:scale(.96);background:var(--accent-soft)}
+.tile{background:var(--raised);border:1px solid var(--line);border-radius:18px;padding:14px 6px;min-height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;text-align:center;font-size:13.5px;font-weight:600;transition:transform .08s,background .15s}
+.tile:active{transform:scale(.96);background:var(--accent-soft);border-color:var(--accent)}
 .tile .e{font-size:24px;line-height:1}
 .tile.danger{color:var(--bad)}
 .tile svg{width:26px;height:26px}
 .hint{color:var(--muted);font-size:13px}
 .chat{display:flex;flex-direction:column;height:100%}
 .msgs{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px 0 10px}
-.msg{max-width:86%;padding:9px 12px;border-radius:16px;white-space:pre-wrap;word-wrap:break-word}
-.msg.me{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:5px}
-.msg.ai{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:5px}
+.msg{max-width:86%;padding:10px 14px;border-radius:18px;white-space:pre-wrap;word-wrap:break-word}
+.msg.me{align-self:flex-end;background:var(--accent-soft);border:1px solid rgba(243,139,168,.3);border-bottom-right-radius:6px}
+.msg.ai{align-self:flex-start;background:var(--card);border:1px solid var(--line);border-bottom-left-radius:6px}
 .msg.err{align-self:center;background:var(--bad-soft);color:var(--bad);font-size:13px}
-.msg.typing::after{content:"▍";animation:blink 1s steps(2) infinite;color:var(--muted)}
+.msg.typing::after{content:"▍";animation:blink 1s steps(2) infinite;color:var(--accent)}
 @keyframes blink{50%{opacity:0}}
 .compose{display:flex;gap:8px;align-items:flex-end;padding-top:8px}
-.compose textarea{flex:1;resize:none;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:10px 14px;max-height:120px;outline:none}
+.compose textarea{flex:1;resize:none;background:var(--card);border:1px solid var(--line-strong);border-radius:20px;padding:11px 15px;max-height:120px;outline:none}
 .compose textarea:focus{border-color:var(--accent)}
-.send{width:44px;height:44px;border-radius:50%;background:var(--accent);color:#fff;display:grid;place-items:center;flex:none}
+.send{width:46px;height:46px;border-radius:50%;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;flex:none}
+.send.ghost{background:var(--raised);color:var(--text)}
+.send.rec{background:var(--bad);color:#fff;animation:pulse 1.2s infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 8px var(--bad-soft)}}
 .send:disabled{opacity:.45}
 .send svg{width:20px;height:20px}
-.chip{font-size:12.5px;padding:6px 11px;border-radius:999px;background:var(--raised);color:var(--muted)}
+.chip{font:600 12px/1 var(--mono);padding:8px 12px;border-radius:var(--r-pill);background:var(--raised);color:var(--muted)}
 .chip.on{color:var(--accent);background:var(--accent-soft)}
-.shot{width:100%;border-radius:12px;display:block;background:#000;min-height:120px}
+.shot{width:100%;border-radius:var(--r-ctl);display:block;background:#000;min-height:120px}
 .toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
-.btn{padding:10px 16px;border-radius:12px;background:var(--raised);font-weight:550}
-.btn.primary{background:var(--accent);color:#fff}
+.btn{padding:11px 16px;border-radius:var(--r-ctl);background:var(--raised);font-weight:700}
+.btn:active{background:var(--raised-hover)}
+.btn.primary{background:var(--accent);color:var(--on-accent)}
 .btn.danger{background:var(--bad-soft);color:var(--bad)}
 .btn:disabled{opacity:.5}
 .btn.wide{width:100%}
 .switch{display:flex;align-items:center;gap:8px;font-size:14px;color:var(--muted)}
 .switch input{accent-color:var(--accent);width:18px;height:18px}
 .center{min-height:100%;display:flex;flex-direction:column;justify-content:center;gap:14px;padding:24px 8px}
-.center h2{margin:0;font-size:24px}
-.field{width:100%;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;outline:none}
+.center h2{margin:0;font:700 24px/1.2 var(--mono)}
+.field{width:100%;background:var(--card);border:1px solid var(--line-strong);border-radius:var(--r-ctl);padding:12px 14px;outline:none}
 .field:focus{border-color:var(--accent)}
-.check{font-size:40px;font-weight:700;letter-spacing:.25em;text-align:center;font-variant-numeric:tabular-nums;color:var(--accent);margin:4px 0}
-.toast{position:fixed;left:50%;bottom:84px;transform:translateX(-50%) translateY(20px);background:#000d;color:#fff;padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;transition:.2s;max-width:90%;text-align:center;z-index:30}
+.check{font:700 40px/1.2 var(--mono);letter-spacing:.25em;text-align:center;color:var(--accent);margin:4px 0}
+.toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%) translateY(20px);background:var(--raised);border:1px solid var(--line-strong);color:var(--text);padding:10px 16px;border-radius:var(--r-ctl);font-size:14px;opacity:0;pointer-events:none;transition:.2s;max-width:90%;text-align:center;z-index:30;box-shadow:0 8px 24px #0008}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
-.banner{background:var(--bad-soft);color:var(--bad);border-radius:12px;padding:10px 12px;font-size:13.5px;margin-bottom:12px}
+.banner{background:var(--bad-soft);color:var(--bad);border:1px solid rgba(242,132,111,.3);border-radius:var(--r-ctl);padding:11px 13px;font-size:13.5px;margin-bottom:12px}
 .files{display:flex;flex-direction:column}
 .file{display:flex;align-items:center;gap:12px;padding:10px 2px;border-top:1px solid var(--line);text-align:left;width:100%}
 .file:first-child{border-top:0}
-.file .ic{width:36px;height:36px;border-radius:10px;background:var(--raised);display:grid;place-items:center;flex:none;color:var(--muted)}
+.file .ic{width:38px;height:38px;border-radius:12px;background:var(--raised);display:grid;place-items:center;flex:none;color:var(--accent)}
 .file .ic svg{width:19px;height:19px}
 .file .nm{flex:1;min-width:0}
-.file .nm b{display:block;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file .nm b{display:block;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .file .nm span{font-size:12.5px;color:var(--muted)}
 .crumbs{display:flex;gap:4px;align-items:center;flex-wrap:wrap;font-size:13.5px;color:var(--muted);margin-bottom:8px}
 .crumbs button{color:var(--accent);padding:2px 0}
@@ -99,14 +115,22 @@ nav .badge{position:absolute;top:5px;left:calc(50% + 6px);min-width:17px;height:
 .xfer:first-of-type{border-top:0}
 .xfer .s{color:var(--muted);font-size:12.5px}
 .xfer.bad .s{color:var(--bad)}
-.sheet{position:fixed;inset:0;background:#0009;display:flex;align-items:flex-end;justify-content:center;z-index:20}
-.sheet>div{background:var(--card);border-radius:20px 20px 0 0;padding:18px 16px 22px;width:100%;max-width:640px;display:flex;flex-direction:column;gap:10px}
+.sheet{position:fixed;inset:0;background:#000a;display:flex;align-items:flex-end;justify-content:center;z-index:20}
+.sheet>div{background:var(--card);border:1px solid var(--line);border-radius:var(--r-card) var(--r-card) 0 0;padding:18px 16px 22px;width:100%;max-width:640px;display:flex;flex-direction:column;gap:10px}
 .sheet .preview{background:var(--raised);border-radius:12px;padding:10px 12px;max-height:120px;overflow:auto;white-space:pre-wrap;word-break:break-all;font-size:13.5px}
 .viewer{position:fixed;inset:0;background:#000;overflow:auto;z-index:25}
 .viewer img{display:block;width:200%;max-width:none}
-.setting{display:flex;align-items:center;gap:12px;padding:6px 0}
+.setting{display:flex;align-items:center;gap:12px;padding:7px 0}
 .setting div{flex:1}
 .setting input{accent-color:var(--accent);width:20px;height:20px}
+/* the avatar */
+.stage{position:relative;height:40vh;min-height:220px;margin:-4px -14px 6px;overflow:hidden;background:radial-gradient(ellipse at 50% 88%,rgba(243,139,168,.16),transparent 62%)}
+.stage canvas{width:100%;height:100%;display:block;touch-action:none}
+.stage .say{position:absolute;inset:auto 14px 10px;text-align:center;color:var(--muted);font-size:13px}
+.stage .tools{position:absolute;top:8px;right:12px;display:flex;gap:6px}
+.stage .tools button{width:36px;height:36px;border-radius:12px;background:rgba(23,24,27,.75);border:1px solid var(--line);display:grid;place-items:center}
+.stage .tools button svg{width:18px;height:18px}
+.stage .tools button.on{color:var(--accent);border-color:rgba(243,139,168,.4)}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -114,6 +138,7 @@ nav .badge{position:absolute;top:5px;left:calc(50% + 6px);min-width:17px;height:
 <div class="app" id="app"></div>
 <div class="toast" id="toast"></div>
 <div id="layer"></div>
+<script src="avatar.js"></script>
 <script>
 "use strict";
 const $ = (s, el = document) => el.querySelector(s);
@@ -143,7 +168,13 @@ const ICON = {
   file: svg('<path d="M14 3.5H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8.5z"/><path d="M14 3.5v5h5"/>'),
   down: svg('<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>'),
   up: svg('<path d="M12 20V9M7 13.5l5-5 5 5M5 4h14"/>'),
-  clip: svg('<rect x="7" y="4" width="10" height="4" rx="1.5"/><path d="M7 6H5.5a1.5 1.5 0 0 0-1.5 1.5v12A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-12A1.5 1.5 0 0 0 18.5 6H17"/>')
+  clip: svg('<rect x="7" y="4" width="10" height="4" rx="1.5"/><path d="M7 6H5.5a1.5 1.5 0 0 0-1.5 1.5v12A1.5 1.5 0 0 0 5.5 21h13a1.5 1.5 0 0 0 1.5-1.5v-12A1.5 1.5 0 0 0 18.5 6H17"/>'),
+  astra: svg('<path d="M12 3l1.8 4.6L18.5 9l-4.7 1.6L12 15.2l-1.8-4.6L5.5 9l4.7-1.4z"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>'),
+  mic: svg('<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>'),
+  sound: svg('<path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z"/><path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a7.5 7.5 0 0 1 0 11"/>'),
+  soundOff: svg('<path d="M4 9.5h3.5L12 5v14l-4.5-4.5H4z"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/>'),
+  person: svg('<circle cx="12" cy="7.5" r="3.5"/><path d="M5 20.5a7 7 0 0 1 14 0"/>'),
+  save: svg('<path d="M12 4v11M7 10.5l5 5 5-5"/><rect x="4" y="17" width="16" height="3.5" rx="1.2"/>')
 };
 
 // ── storage and the bridge to the phone ─────────────────────────────────────
@@ -211,6 +242,7 @@ let pollTimer = null;
 let volDragging = false;
 
 async function refresh() {
+  me = status(); // the PC may have told Java about new addresses (e.g. Tailscale)
   try {
     state = await getJson("/api/state");
     online = true;
@@ -231,7 +263,7 @@ function stopPolling() { clearInterval(pollTimer); pollTimer = null; }
 document.addEventListener("visibilitychange", () => { if (!document.hidden && me.paired) refresh(); });
 
 // ── layout ──────────────────────────────────────────────────────────────────
-const TABS = [["remote", "Пульт"], ["chat", "Чат"], ["files", "Файлы"], ["screen", "Экран"], ["more", "Ещё"]];
+const TABS = [["remote", "Пульт"], ["chat", "Astra"], ["files", "Файлы"], ["screen", "Экран"], ["more", "Ещё"]];
 function render() {
   const app = $("#app");
   if (!me.paired) return renderPair(app);
@@ -239,9 +271,10 @@ function render() {
   app.innerHTML = `
     <header><span class="dot" id="dot"></span><h1 id="host">${esc(me.pc || "Astra Remote")}</h1></header>
     <main id="main"></main>
-    <nav>${TABS.map(([id, label]) => `<button data-tab="${id}" class="${tab === id ? "on" : ""}">${ICON[id]}<span>${label}</span></button>`).join("")}</nav>`;
+    <nav>${TABS.map(([id, label]) => `<button data-tab="${id}" class="${tab === id ? "on" : ""}">${ICON[id === "chat" ? "astra" : id]}<span>${label}</span></button>`).join("")}</nav>`;
   app.querySelectorAll("nav button").forEach((b) => b.onclick = () => { tab = b.dataset.tab; store.set("tab", tab); render(); });
   const main = $("#main");
+  if (tab !== "chat") dropAvatar(); // the avatar draws only while her tab is open
   ({ remote: renderRemote, chat: renderChat, files: renderFiles, screen: renderScreen, more: renderMore })[tab](main);
   paintStatus();
   paintBadge();
@@ -333,7 +366,8 @@ function renderRemote(main) {
         <span class="n" id="voln"></span>
       </div>
     </div>
-    <div class="card"><h2>Кнопки</h2><div class="grid" id="buttons"></div></div>`;
+    <div class="card"><h2>Кнопки</h2><div class="grid" id="buttons"></div></div>
+    <div class="card" id="recent" hidden></div>`;
   main.querySelectorAll("[data-key]").forEach((b) => b.onclick = async () => {
     buzz();
     try { await post("/api/media", { key: b.dataset.key }); setTimeout(refresh, 700); } catch (e) { toast(e.message); }
@@ -361,13 +395,25 @@ function renderRemote(main) {
 function paintRemote() {
   if (!$("#stats")) return;
   const s = state;
-  $("#banner").innerHTML = online === false ? '<div class="banner">ПК не отвечает. Проверь, что ПК включён, Astra запущена, а телефон в той же сети (или в Tailscale).</div>' : "";
+  $("#banner").innerHTML = online === false ? offlineBanner() : "";
+  if ($("#tsOpen")) $("#tsOpen").onclick = () => AR.openTailscale();
   if (!s) return;
   const sys = s.system || {};
+  const gpu = sys.gpu ? `<div class="stat"><b>${sys.gpu.load}%</b><span>видеокарта</span></div><div class="stat"><b>${sys.gpu.temp}°</b><span>её температура</span></div>` : "";
+  const disks = (sys.disks || []).slice(0, 3).map((d) => `<div class="stat"><b>${d.freeGb}<small style="font-size:11px"> ГБ</small></b><span>свободно на ${esc(d.name)}</span></div>`).join("");
   $("#stats").innerHTML = `
     <div class="stat"><b>${sys.cpu ?? "–"}%</b><span>процессор</span></div>
     <div class="stat"><b>${sys.ramUsed ?? "–"}%</b><span>память</span></div>
-    <div class="stat"><b>${fmtUptime(sys.uptimeMin)}</b><span>работает</span></div>`;
+    <div class="stat"><b>${fmtUptime(sys.uptimeMin)}</b><span>работает</span></div>${gpu}${disks}`;
+  const sentBox = $("#recent");
+  const sent = (s.sent || []).slice(0, 3);
+  const sentSig = JSON.stringify(sent);
+  if (sentBox && sentBox.dataset.sig !== sentSig) {
+    sentBox.dataset.sig = sentSig;
+    sentBox.hidden = !sent.length;
+    sentBox.innerHTML = `<h2>Astra прислала</h2><div class="files">${sent.map((x, i) => fileRow({ name: x.name, size: x.size, mtime: x.at, dir: false }, "r" + i)).join("")}</div>`;
+    sentBox.querySelectorAll("[data-i]").forEach((b) => b.onclick = () => { const x = sent[Number(b.dataset.i.slice(1))]; fetchFile(x.path, x.name); });
+  }
   const m = s.media;
   $("#np").innerHTML = m && (m.title || m.artist)
     ? `<div class="t">${esc(m.title || "Без названия")}</div><div class="a">${esc(m.artist || appName(m.app))}</div>`
@@ -392,6 +438,15 @@ function paintRemote() {
     try { await post("/api/button", { n: Number(b.dataset.n) }); toast("Готово"); } catch (e) { toast(e.message); }
   });
 }
+// what to try when the PC does not answer; away from home that is almost always Tailscale
+function offlineBanner() {
+  const why = me.relay ? "Приложение пробует и домашнюю сеть, и ретранслятор — ждать ничего не нужно."
+    : me.tailscale ? (me.tailscaleApp ? "Не дома? Включи Tailscale на телефоне." : "Не дома? Поставь Tailscale на телефон и войди тем же аккаунтом, что на ПК.")
+    : "Вне дома нужен ретранслятор — подробнее во вкладке «Ещё».";
+  return `<div class="banner">ПК не отвечает. Он должен быть включён и не спать, а Astra — запущена.<br>${why}
+    ${!me.relay && me.tailscale ? `<br><button class="btn" id="tsOpen" style="margin-top:8px;padding:7px 12px">${me.tailscaleApp ? "Открыть Tailscale" : "Установить Tailscale"}</button>` : ""}</div>`;
+}
+
 const fmtUptime = (m) => m == null ? "–" : m < 60 ? m + " мин" : m < 1440 ? Math.floor(m / 60) + " ч" : Math.floor(m / 1440) + " д";
 const appName = (id) => String(id || "").replace(/\.exe$/i, "").split(/[!\\.]/).filter(Boolean).pop() || "";
 
@@ -408,11 +463,25 @@ window.__chat = (id, line) => {
 
 function renderChat(main) {
   main.style.paddingBottom = "10px";
+  const showAvatar = store.get("avatar", true);
   main.innerHTML = `<div class="chat">
+    ${showAvatar ? `<div class="stage" id="stage"><canvas id="avatar"></canvas>
+      <div class="tools"><button id="spk" class="${store.get("speak", false) ? "on" : ""}" aria-label="Читать вслух">${store.get("speak", false) ? ICON.sound : ICON.soundOff}</button></div>
+      <div class="say" id="say"></div></div>` : ""}
     <div class="row" style="justify-content:space-between"><span class="hint">Разговор с Astra на ПК</span><button class="chip" id="new">Новый диалог</button></div>
     <div class="msgs" id="msgs"></div>
-    <div class="compose"><textarea id="text" rows="1" placeholder="Напиши Astra…"></textarea><button class="send" id="send" aria-label="Отправить">${streaming ? ICON.stop : ICON.send}</button></div>
+    <div class="compose"><button class="send ghost" id="mic" aria-label="Сказать">${ICON.mic}</button><textarea id="text" rows="1" placeholder="Напиши Astra…"></textarea><button class="send" id="send" aria-label="Отправить">${streaming ? ICON.stop : ICON.send}</button></div>
   </div>`;
+  $("#mic").onclick = () => { buzz(); AR.stopSpeaking(); AR.listen(); };
+  if ($("#spk")) $("#spk").onclick = () => {
+    const on = !store.get("speak", false);
+    store.set("speak", on);
+    $("#spk").classList.toggle("on", on);
+    $("#spk").innerHTML = on ? ICON.sound : ICON.soundOff;
+    if (!on) AR.stopSpeaking();
+    toast(on ? "Ответы будут звучать вслух" : "Ответы без звука");
+  };
+  if (showAvatar) mountAvatar();
   paintMsgs();
   const ta = $("#text");
   ta.value = store.get("draft", "");
@@ -437,6 +506,77 @@ function paintMsgs() {
   box.scrollTop = box.scrollHeight;
 }
 
+// ── the avatar ──────────────────────────────────────────────────────────────
+// The model the character wears in Astra, fetched once (the app keeps it until it is unpaired); the
+// pack's own motions play now and then, a reaction on a tap, and her mouth moves while she speaks.
+let av = null, avInfo = null, avIdle = null, speaking = false;
+const IDLE_CLIPS = ["mx_look_around", "mx_bored", "mx_stretch_neck", "mx_sigh", "mx_thinking", "mx_happy", "fm_smartphone"];
+const TAP_CLIPS = ["mx_wave", "mx_kiss", "mx_bashful", "mx_clap", "mx_happy", "mx_laugh", "vrma_peace"];
+const HAPPY_CLIPS = ["mx_happy", "mx_clap", "mx_laugh", "mx_excited"];
+const SAD_CLIPS = ["mx_sad", "mx_sigh"];
+
+const sayLine = (t) => { if ($("#say")) $("#say").textContent = t; };
+window.__avatarProgress = (done, total) => { if (total > 0) sayLine(`Загружаю модельку… ${Math.round(100 * done / total)}%`); };
+
+function dropAvatar() {
+  clearInterval(avIdle);
+  avIdle = null;
+  if (av) { av.dispose(); av = null; }
+}
+
+async function mountAvatar() {
+  dropAvatar();
+  const canvas = $("#avatar");
+  if (!canvas || !window.AvatarKit) return;
+  try {
+    av = AvatarKit.create(canvas, { onTap: () => { buzz(); playSome(TAP_CLIPS); } });
+  } catch (e) {
+    sayLine("Телефон не умеет рисовать 3D (WebGL)");
+    return;
+  }
+  const mine = av;
+  try {
+    sayLine("Узнаю, какая моделька на ПК…");
+    avInfo = await getJson("/api/avatar");
+    if (avInfo.none) { sayLine("У персонажа в Astra встроенная модель — её показать нельзя"); return; }
+    const url = await native((id) => AR.avatarFetch(id, "model", "", avInfo.model.sha)).then(check).then((r) => r.text);
+    if (av !== mine) return;
+    sayLine("Одеваюсь…");
+    await av.load(url);
+    if (av !== mine) return;
+    sayLine("");
+    if (streaming || speaking) av.setTalking(true);
+    playSome(["mx_wave", "vrma_greeting"]);
+    avIdle = setInterval(() => { if (av && !av.busy() && !streaming && !speaking && !document.hidden) playSome(IDLE_CLIPS); }, 22000);
+  } catch (e) {
+    if (av === mine) sayLine(e.message || "Не получилось загрузить модельку");
+  }
+}
+
+// one of these motions, if the pack has it (fetched once, then from the phone)
+async function playSome(names) {
+  const have = (avInfo?.clips || []).filter((c) => names.includes(c.name));
+  if (!av || !have.length) return;
+  const c = have[Math.floor(Math.random() * have.length)];
+  try {
+    const url = await native((id) => AR.avatarFetch(id, "clip", c.name, String(c.size))).then(check).then((r) => r.text);
+    av?.play(url);
+  } catch {}
+}
+
+// a rough mood of a reply, for her face and a motion
+function moodOf(text) {
+  if (/(извин|к сожалению|не могу|не получилось|ошибк|грустн)/i.test(text)) return "sad";
+  if (/(!|ура|отлично|супер|готово|рада|класс|😊|😄|🎉|❤)/i.test(text)) return "happy";
+  return null;
+}
+
+window.__speaking = (on) => { speaking = on; av?.setTalking(on || !!streaming); };
+window.__heard = (e) => {
+  if (e.error) { toast(e.error); return; }
+  if (e.text) { if (tab !== "chat") { tab = "chat"; store.set("tab", tab); render(); } sendChat(e.text); }
+};
+
 async function sendChat(given) {
   const ta = $("#text");
   const text = (given ?? ta?.value ?? "").trim();
@@ -444,6 +584,8 @@ async function sendChat(given) {
   if (ta && given === undefined) { ta.value = ""; ta.style.height = "auto"; store.del("draft"); }
   chatLog.push({ role: "me", text });
   streaming = { text: "" };
+  AR.stopSpeaking();
+  av?.setTalking(!store.get("speak", false)); // spoken replies move her mouth themselves (__speaking)
   if ($("#send")) $("#send").innerHTML = ICON.stop;
   paintMsgs();
   const fresh = store.get("fresh", false);
@@ -460,6 +602,13 @@ async function sendChat(given) {
     });
     AR.chat(id, text, !!fresh);
   });
+  const reply = streaming.text;
+  if (!store.get("speak", false) || !reply) av?.setTalking(false);
+  if (reply) {
+    if (store.get("speak", false)) AR.speak(reply);
+    const mood = moodOf(reply);
+    if (mood) { av?.setMood(mood, 5); playSome(mood === "happy" ? HAPPY_CLIPS : SAD_CLIPS); }
+  }
   if (streaming.text) chatLog.push({ role: "ai", text: streaming.text });
   else if (!error) chatLog.push({ role: "err", text: "Astra ничего не ответила" });
   if (error) chatLog.push({ role: "err", text: error });
@@ -499,12 +648,15 @@ function renderFiles(main) {
   if (sent.length) store.set("seenSent", sent[0].at);
   main.innerHTML = `
     <div class="toolbar"><button class="btn primary" id="pick">${"Отправить на ПК"}</button><button class="btn" id="reload">Обновить</button></div>
+    <div class="toolbar"><button class="btn" id="openPc">Открыть на ПК</button><button class="btn" id="openPhone">Папка на телефоне</button></div>
     <div class="card" id="xferCard" hidden><h2>Передача</h2><div id="xfers"></div></div>
     ${sent.length ? `<div class="card"><h2>Astra прислала</h2><div class="files" id="sent"></div></div>` : ""}
     <div class="card"><h2>Общая папка на ПК</h2><div class="crumbs" id="crumbs"></div><div class="files" id="list"><p class="hint">Загружаю…</p></div></div>
     <p class="hint">Всё, что отправляешь с телефона, попадает в папку «С телефона». Astra видит эту папку и может сама положить сюда файл для тебя — просто попроси её в чате. Отправить на ПК можно и из любого приложения: «Поделиться» → Astra Remote.</p>`;
   $("#pick").onclick = () => AR.pickFiles();
   $("#reload").onclick = () => { refresh(); loadDir(); };
+  $("#openPc").onclick = async () => { buzz(); try { await post("/api/files/open", { path: filePath }); toast("Папка открыта на ПК"); } catch (e) { toast(e.message); } };
+  $("#openPhone").onclick = () => AR.openPhoneFolder();
   if (sent.length) {
     $("#sent").innerHTML = sent.slice(0, 8).map((s, i) => fileRow({ name: s.name, size: s.size, mtime: s.at, dir: false }, "s" + i)).join("");
     $("#sent").querySelectorAll("[data-i]").forEach((b) => b.onclick = () => fetchFile(sent[Number(b.dataset.i.slice(1))].path, sent[Number(b.dataset.i.slice(1))].name));
@@ -583,12 +735,14 @@ function renderScreen(main) {
   main.innerHTML = `
     <div class="toolbar">
       <button class="btn primary" id="snap">Обновить</button>
+      <button class="icon-btn" id="saveShot" aria-label="В галерею">${ICON.save}</button>
       <label class="switch"><input type="checkbox" id="auto"> каждые 3 с</label>
       ${n > 1 ? `<span style="flex:1"></span>${Array.from({ length: n }, (_, i) => `<button class="chip ${i === screenIndex ? "on" : ""}" data-s="${i}">${i + 1}</button>`).join("")}` : ""}
     </div>
     <img class="shot" id="shot" alt="">
     <p class="hint">Нажми на снимок, чтобы рассмотреть в полном размере.</p>`;
   $("#snap").onclick = snap;
+  $("#saveShot").onclick = () => { if (shotUrl) { buzz(); AR.saveImage(shotUrl.split(",")[1]); } else toast("Сначала обнови снимок"); };
   $("#auto").checked = !!autoShot;
   $("#auto").onchange = (e) => {
     clearInterval(autoShot);
@@ -645,7 +799,17 @@ function renderMore(main) {
     ? `<label class="setting"><div>Блокировать приложение<br><span class="hint">Через минуту в фоне — отпечаток, лицо или PIN телефона</span></div><input type="checkbox" id="lockSet" ${me.lock ? "checked" : ""}></label>`
     : '<p class="hint" style="margin:0 0 8px">Чтобы приложение блокировалось в фоне, поставь на телефон PIN, графический ключ или отпечаток.</p>';
   const key = state?.device?.expires ? `<p class="hint" style="margin:8px 0">Ключ этого телефона действует до ${new Date(state.device.expires).toLocaleDateString("ru-RU")}. Потом нужно будет подключиться заново по QR-коду.</p>` : "";
-  main.innerHTML = power + clip + `<div class="card"><h2>Это устройство</h2>${lockRow}${key}
+  const remote = `<div class="card"><h2>Вне дома</h2>${me.relay
+      ? '<p class="hint" style="margin:0">Работает откуда угодно: дома — напрямую, вне дома — через ретранслятор ПК. Ретранслятор только передаёт данные, внутри та же защищённая связь с ПК. ПК должен быть включён и не спать (в настройках плагина: «Не уходить в сон, пока подключён телефон»).</p>'
+      : `<p class="hint" style="margin:0 0 10px">Сейчас приложение работает только в одной сети с ПК. Чтобы пользоваться им откуда угодно, впиши ретранслятор в настройках плагина на ПК (поле «Ретранслятор») и открой приложение дома один раз — оно само узнает адрес. Или поставь Tailscale на ПК и телефон.</p>
+         <button class="btn" id="tsMore">${me.tailscaleApp ? "Открыть Tailscale" : "Установить Tailscale"}</button>`}</div>`;
+  const astraCard = `<div class="card"><h2>Astra на телефоне</h2>
+      <label class="setting"><div>Моделька на вкладке Astra<br><span class="hint">Та, которую носит персонаж в Astra. Скачивается один раз, хранится только в приложении и стирается при отключении телефона</span></div><input type="checkbox" id="avSet" ${store.get("avatar", true) ? "checked" : ""}></label>
+      <label class="setting"><div>Читать ответы вслух<br><span class="hint">Голосом телефона; моделька при этом говорит</span></div><input type="checkbox" id="spSet" ${store.get("speak", false) ? "checked" : ""}></label>
+      <label class="setting"><div>Уведомления от Astra<br><span class="hint">Попроси Astra «напомни мне на телефон…». Пока приложение открыто — сразу, иначе примерно раз в 15 минут</span></div><input type="checkbox" id="ntSet" ${AR.notesEnabled() ? "checked" : ""}></label>
+      <label class="setting"><div>Разрешить скриншоты приложения<br><span class="hint">Иначе Android закрывает экран приложения от скриншотов и записи экрана — чтобы снимки ПК не утекали</span></div><input type="checkbox" id="shSet" ${AR.screenshotsAllowed() ? "checked" : ""}></label>
+      <p class="hint" style="margin:6px 0 0">На главный экран можно добавить виджет с первыми четырьмя кнопками, а в шторку — плитки «Пауза на ПК» и «Заблокировать ПК».</p></div>`;
+  main.innerHTML = power + clip + astraCard + remote + `<div class="card"><h2>Это устройство</h2>${lockRow}${key}
     <button class="btn danger" id="unpair" style="margin-top:6px">Отключить этот телефон</button></div>`;
 
   main.querySelectorAll("[data-p]").forEach((b) => b.onclick = async () => {
@@ -671,6 +835,11 @@ function renderMore(main) {
       toast("Скопировано на телефон");
     } catch (e) { toast(e.message); }
   };
+  if ($("#tsMore")) $("#tsMore").onclick = () => AR.openTailscale();
+  $("#avSet").onchange = (e) => store.set("avatar", e.target.checked);
+  $("#spSet").onchange = (e) => store.set("speak", e.target.checked);
+  $("#ntSet").onchange = (e) => AR.setNotes(e.target.checked);
+  $("#shSet").onchange = (e) => { AR.setScreenshotsAllowed(e.target.checked); toast(e.target.checked ? "Скриншоты приложения разрешены" : "Скриншоты приложения запрещены"); };
   if ($("#lockSet")) $("#lockSet").onchange = (e) => { AR.setLock(e.target.checked); me.lock = e.target.checked; };
   $("#unpair").onclick = () => {
     if (!confirm("Отключить этот телефон? Подключать заново придётся по QR-коду.")) return;

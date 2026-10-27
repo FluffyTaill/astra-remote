@@ -41,10 +41,13 @@ public static class AR {
   [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
   [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
+  [DllImport("kernel32.dll")] static extern uint SetThreadExecutionState(uint flags);
   static AR() { SetProcessDPIAware(); }
 
   // media keys are extended keys: down, then up
   public static void MediaKey(int vk) { keybd_event((byte)vk, 0, 1, UIntPtr.Zero); keybd_event((byte)vk, 0, 3, UIntPtr.Zero); }
+  // ES_CONTINUOUS | ES_SYSTEM_REQUIRED: no automatic sleep while the worker thread lives; the screen still turns off
+  public static void KeepAwake(bool on) { SetThreadExecutionState(on ? 0x80000001u : 0x80000000u); }
   public static void MonitorOff() { PostMessage((IntPtr)0xFFFF, 0x0112, (IntPtr)0xF170, (IntPtr)2); }
 
   // the default output device is looked up every time: headphones may have been plugged in since
@@ -212,6 +215,12 @@ export async function nowPlaying() {
   return ps("Media", 8000).catch(() => null);
 }
 
+// Keep the PC from sleeping on its own (so the phone can reach it from work). Held by the worker's
+// thread, so it ends with the plugin; re-applied periodically in case the worker was restarted.
+export async function keepAwake(on) {
+  await ps(`[AR]::KeepAwake($${on ? "true" : "false"})`);
+}
+
 export async function screens() {
   return ps("[AR]::Screens()");
 }
@@ -334,4 +343,34 @@ export function system() {
     ramUsed: Math.round(100 * (1 - os.freemem() / os.totalmem())),
     ramTotalGb: Math.round(os.totalmem() / 2 ** 30)
   };
+}
+
+// ── more numbers for the phone: the video card and the disks ────────────────
+// Kept fresh in the background and read from memory, so /api/state never waits on nvidia-smi.
+let extra = { gpu: null, disks: [] }, extraAt = 0;
+function refreshExtra() {
+  extraAt = Date.now();
+  cp.execFile("nvidia-smi", ["--query-gpu=name,temperature.gpu,utilization.gpu", "--format=csv,noheader,nounits"], { timeout: 5000, windowsHide: true },
+    (err, out) => {
+      const m = !err && String(out).split(/\r?\n/)[0].split(",").map((x) => x.trim());
+      extra.gpu = m && m.length >= 3 ? { name: m[0].replace(/^NVIDIA\s+/i, ""), temp: Number(m[1]), load: Number(m[2]) } : null;
+    });
+  const disks = [];
+  for (const letter of "CDEFGHIJ") {
+    try {
+      const s = fs.statfsSync(letter + ":\\");
+      const total = s.blocks * s.bsize;
+      if (total > 0) disks.push({ name: letter + ":", freeGb: Math.round((s.bavail * s.bsize) / 2 ** 30), totalGb: Math.round(total / 2 ** 30) });
+    } catch {}
+  }
+  extra.disks = disks;
+}
+export function moreStats() {
+  if (Date.now() - extraAt > 15000) refreshExtra();
+  return { gpu: extra.gpu, disks: extra.disks };
+}
+
+// A folder opened in Explorer on this PC's screen (the shared folder, from the plugin page or the phone).
+export function openFolder(dir) {
+  cp.spawn("explorer.exe", [dir], { detached: true, stdio: "ignore", windowsHide: false }).unref();
 }

@@ -10,6 +10,34 @@ const crypto = require("node:crypto");
 const cp = require("node:child_process");
 
 const root = __dirname;
+
+// The avatar's three.js + three-vrm bundle (web/avatar.js → assets/avatar.js), when the plugin's
+// node_modules are there; a copy of this folder elsewhere builds with the bundle it already has.
+const esbuildPath = path.join(root, "..", "node_modules", "esbuild");
+if (fs.existsSync(esbuildPath)) {
+  require(esbuildPath).buildSync({
+    entryPoints: [path.join(root, "web", "avatar.js")], bundle: true, minify: true, format: "iife", target: "es2020",
+    legalComments: "eof", outfile: path.join(root, "assets", "avatar.js"), logLevel: "warning"
+  });
+}
+
+// aapt2 cannot open a path with letters outside ASCII ("Astra — модели и плагины"): build in a copy
+// under the temp folder, then bring the APK back.
+if (/[^\x20-\x7e]/.test(root) && !process.env.AR_BUILD_COPY) {
+  const tmp = path.join(require("node:os").tmpdir(), "astra-remote-android");
+  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.cpSync(root, tmp, { recursive: true, filter: (src) => !/[\\/]build$|\.apk$|\.idsig$/.test(src) });
+  const r = cp.spawnSync(process.execPath, [path.join(tmp, "build.js")], { stdio: "inherit", env: { ...process.env, AR_BUILD_COPY: "1" } });
+  if (r.status !== 0) process.exit(r.status || 1);
+  fs.copyFileSync(path.join(tmp, "astra-remote.apk"), path.join(root, "astra-remote.apk"));
+  // the signing key is made on a first build: keep it with the sources
+  for (const f of ["release.keystore", "keystore.properties"]) {
+    if (!fs.existsSync(path.join(root, f)) && fs.existsSync(path.join(tmp, f))) fs.copyFileSync(path.join(tmp, f), path.join(root, f));
+  }
+  console.log("built", path.join(root, "astra-remote.apk"));
+  process.exit(0);
+}
+
 const out = path.join(root, "build");
 const exe = (p) => (process.platform === "win32" && !/\.(exe|bat)$/.test(p) && fs.existsSync(p + ".exe") ? p + ".exe" : fs.existsSync(p + ".bat") ? p + ".bat" : p);
 
@@ -53,7 +81,8 @@ fs.mkdirSync(path.join(out, "apk"), { recursive: true });
 // 1. resources and manifest
 run(tool("aapt2"), ["compile", "--dir", path.join(root, "res"), "-o", path.join(out, "res.zip")]);
 run(tool("aapt2"), ["link", "-I", platform, "--manifest", path.join(root, "AndroidManifest.xml"), "-A", path.join(root, "assets"),
-  "--min-sdk-version", "26", "--target-sdk-version", "35", "-o", path.join(out, "base.apk"), path.join(out, "res.zip")]);
+  "--min-sdk-version", "26", "--target-sdk-version", "35", "--java", path.join(out, "gen"), // R.java: the widget's layout, the tiles' icons
+  "-o", path.join(out, "base.apk"), path.join(out, "res.zip")]);
 // unpacked, so the final zip can be written with resources.arsc stored (aapt2's --output-to-dir trips on Windows)
 run(exe(path.join(jdk, "jar")), ["xf", path.join(out, "base.apk")], { cwd: path.join(out, "apk") });
 
@@ -66,6 +95,13 @@ const sources = [];
     else if (f.endsWith(".java")) sources.push(p);
   }
 })(path.join(root, "src"));
+(function walk(d) {
+  for (const f of fs.readdirSync(d)) {
+    const p = path.join(d, f);
+    if (fs.statSync(p).isDirectory()) walk(p);
+    else if (f.endsWith(".java")) sources.push(p);
+  }
+})(path.join(out, "gen"));
 run(exe(path.join(jdk, "javac")), ["-encoding", "UTF-8", "-source", "8", "-target", "8", "-Xlint:-options", "-nowarn",
   "-bootclasspath", platform + path.delimiter + path.join(bt, "core-lambda-stubs.jar"), "-classpath", libs.join(path.delimiter), "-d", path.join(out, "classes"), ...sources]);
 const classes = [];

@@ -39,8 +39,8 @@ h1{font-size:24px;margin:0 0 4px}
 .status.ok{background:var(--ok-bg);border-color:var(--ok-border)}
 .status.bad{background:var(--bad-bg);border-color:var(--bad-border)}
 .status.warn{background:var(--warn-bg);border-color:var(--warn-border)}
-.pair{display:grid;grid-template-columns:220px 1fr;gap:20px;align-items:center;margin-top:14px}
-.qr{width:220px;height:220px;border-radius:12px;overflow:hidden;background:#fff}
+.pair{display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:center;margin-top:14px}
+.qr{width:300px;height:300px;max-width:80vw;max-height:80vw;border-radius:12px;overflow:hidden;background:#fff}
 .qr svg{width:100%;height:100%;display:block}
 .code{font-size:34px;letter-spacing:.3em;font-weight:700;font-variant-numeric:tabular-nums}
 .mono{font-family:Consolas,monospace;font-size:13px;word-break:break-all;color:var(--accent-text)}
@@ -72,12 +72,14 @@ ol b{color:var(--text);font-weight:600}
 
   <div class="card">
     <h2>Подключить телефон</h2>
-    <p class="hint">Нужен Android-телефон с приложением <b>Astra Remote</b>, в той же Wi-Fi-сети, что и ПК. Вне дома — через <b>Tailscale</b> на обоих устройствах. Порт в интернет не открывай.</p>
+    <p class="hint">Нужен Android-телефон с приложением <b>Astra Remote</b>. Подключать его в первый раз — в той же Wi-Fi-сети, что и ПК; вне дома он ходит через твой ретранслятор (ниже). Порт в интернет не открывай.</p>
     <div id="server"></div>
     <div class="row" style="margin-top:12px" id="pairControls"></div>
     <div id="pairBox"></div>
     <div id="requests"></div>
   </div>
+
+  <div class="card" id="relayCard"></div>
 
   <div class="card">
     <h2>Устройства</h2>

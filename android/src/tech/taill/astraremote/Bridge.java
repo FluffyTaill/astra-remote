@@ -5,6 +5,7 @@ import android.content.ClipboardManager;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
@@ -51,6 +52,7 @@ import javax.net.ssl.HttpsURLConnection;
  */
 final class Bridge {
     private static final Pattern IPV4 = Pattern.compile("^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$");
+    private static final String TAILSCALE = "com.tailscale.ipn";
     private static final Pattern HEX64 = Pattern.compile("^[0-9a-f]{64}$");
 
     private final MainActivity activity;
@@ -62,6 +64,7 @@ final class Bridge {
     private final ExecutorService transfers = Executors.newSingleThreadExecutor();
     private volatile Vault.Pairing pairing;
     private volatile Pinned net;
+    private volatile Relay relay; // the way in from anywhere, if the PC has a relay
     private volatile PairAttempt attempt;
     private volatile HttpsURLConnection chatConn;
     private volatile boolean chatStopped;
@@ -78,14 +81,31 @@ final class Bridge {
         this.web = web;
         this.vault = vault;
         setPairing(vault.load());
+        Remote.scheduleNotes(activity);
     }
 
     private void setPairing(Vault.Pairing p) {
         pairing = p;
-        net = p == null ? null : new Pinned(p.hosts, p.port, p.fingerprint, p.lastHost);
+        relay = relayFor(p);
+        net = p == null ? null : new Pinned(p.hosts, p.port, p.fingerprint, p.lastHost, relay);
+    }
+
+    /** The relay this pairing names, reusing the running one when it is the same. */
+    private Relay relayFor(Vault.Pairing p) {
+        Relay old = relay;
+        if (p != null && Relay.valid(p.relayUrl, p.relayId)) {
+            if (old != null && old.same(p.relayUrl, p.relayId)) return old;
+            if (old != null) old.close();
+            return new Relay(p.relayUrl, p.relayId);
+        }
+        if (old != null) old.close();
+        return null;
     }
 
     void shutdown() {
+        if (tts != null) tts.shutdown();
+        Relay r = relay;
+        if (r != null) r.close();
         PairAttempt a = attempt;
         if (a != null) a.cancelled = true;
         stopChat();
@@ -117,19 +137,135 @@ final class Bridge {
         }
     }
 
+    static boolean isTailscale(String ip) {
+        java.util.regex.Matcher m = IPV4.matcher(ip);
+        if (!m.matches()) return false;
+        int a = Integer.parseInt(m.group(1)), b = Integer.parseInt(m.group(2));
+        return a == 100 && b >= 64 && b < 128;
+    }
+
+    private static List<String> validHosts(Iterable<String> list) {
+        List<String> out = new ArrayList<>();
+        for (String h : list) {
+            String t = h == null ? "" : h.trim();
+            java.util.regex.Matcher m = IPV4.matcher(t);
+            if (!m.matches() || out.contains(t)) continue;
+            boolean ok = true;
+            for (int i = 1; i <= 4; i++) ok &= Integer.parseInt(m.group(i)) <= 255;
+            if (ok) out.add(t);
+        }
+        return out;
+    }
+
+    /**
+     * The PC says where it can be reached now (a new home IP, Tailscale installed after pairing): keep the
+     * phone's list in step. Safe to take from the PC — it came over the pinned connection, and any address
+     * still has to show the paired certificate before it gets the key.
+     */
+    private void updateHosts(String stateJson) {
+        Vault.Pairing p = pairing;
+        if (p == null) return;
+        try {
+            JSONObject st = new JSONObject(stateJson);
+            // the relay: set up, changed or turned off on the PC since pairing
+            JSONObject r = st.optJSONObject("relay");
+            String ru = r == null ? "" : r.optString("url"), ri = r == null ? "" : r.optString("id");
+            if (!Relay.valid(ru, ri)) ru = ri = "";
+            if (!ru.equals(p.relayUrl) || !ri.equals(p.relayId)) {
+                p.relayUrl = ru;
+                p.relayId = ri;
+                if (ru.isEmpty() && Relay.HOST.equals(p.lastHost)) p.lastHost = p.hosts[0];
+                vault.save(p);
+                setPairing(p);
+            }
+            org.json.JSONArray arr = st.optJSONArray("endpoints");
+            if (arr == null || arr.length() == 0) return;
+            List<String> fresh = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) fresh.add(arr.optString(i));
+            fresh = validHosts(fresh);
+            if (fresh.isEmpty()) return;
+            List<String> old = java.util.Arrays.asList(p.hosts);
+            if (fresh.size() == old.size() && fresh.containsAll(old)) return;
+            Pinned n = net;
+            String current = n == null ? p.lastHost : n.currentHost();
+            p.hosts = fresh.toArray(new String[0]);
+            p.lastHost = fresh.contains(current) || (Relay.HOST.equals(current) && relay != null) ? current : fresh.get(0);
+            vault.save(p);
+            net = new Pinned(p.hosts, p.port, p.fingerprint, p.lastHost, relay);
+        } catch (Exception ignored) {
+        }
+    }
+
+    /** What the app does with each fresh /api/state besides the page: the widget's labels, Astra's notes. */
+    private void afterState(String stateJson) {
+        try {
+            JSONObject st = new JSONObject(stateJson);
+            org.json.JSONArray b = st.optJSONArray("buttons");
+            if (b != null) ButtonsWidget.saveButtons(activity, b);
+            long newest = st.optLong("notes");
+            if (Remote.notesOn(activity) && newest > Remote.prefs(activity).getLong("lastNote", -1)) {
+                pool.execute(() -> {
+                    try {
+                        Remote.checkNotes(activity);
+                    } catch (Exception ignored) {
+                    }
+                });
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    // ── small things ────────────────────────────────────────────────────────
+
+    @JavascriptInterface
+    public boolean screenshotsAllowed() {
+        return activity.screenshotsAllowed();
+    }
+
+    @JavascriptInterface
+    public void setScreenshotsAllowed(final boolean on) {
+        ui.post(() -> activity.setScreenshotsAllowed(on));
+    }
+
+    @JavascriptInterface
+    public void openPhoneFolder() {
+        ui.post(activity::openPhoneFolder);
+    }
+
+    // ── notes from Astra ────────────────────────────────────────────────────
+
+    @JavascriptInterface
+    public boolean notesEnabled() {
+        return Remote.notesOn(activity);
+    }
+
+    @JavascriptInterface
+    public void setNotes(final boolean on) {
+        Remote.prefs(activity).edit().putBoolean("notes", on).apply();
+        ui.post(() -> {
+            if (on) activity.askNotifications();
+            Remote.scheduleNotes(activity);
+        });
+    }
+
     /** The PC no longer knows this phone (unpaired there, or the key ran out): drop the pairing here too. */
     private void forgetLocally() {
         vault.clear();
         setPairing(null);
+        deleteTree(avatarDir()); // the model belongs to that PC's owner: it does not outlive the pairing
+        Remote.prefs(activity).edit().remove("lastNote").remove("widget").apply();
+        Remote.scheduleNotes(activity); // no pairing: the job is cancelled
+        ButtonsWidget.redraw(activity);
         js("window.__forgotten&&window.__forgotten()");
     }
 
     static String message(Exception e) {
         if (e instanceof ConnectException || e instanceof SocketTimeoutException || e instanceof NoRouteToHostException) {
-            return "ПК не отвечает. Проверь, что он включён, Astra запущена, а телефон в той же сети или в Tailscale";
+            return "ПК не отвечает. Проверь, что он включён и Astra на нём запущена. Вне дома нужен ретранслятор (настройки плагина) или Tailscale";
         }
         String m = e.getMessage();
         if (m != null && m.contains(Pinned.MISMATCH)) return Pinned.MISMATCH;
+        if (m != null && m.contains(Relay.OFFLINE)) return Relay.OFFLINE;
         return m == null || m.isEmpty() ? e.getClass().getSimpleName() : m;
     }
 
@@ -176,6 +312,11 @@ final class Bridge {
             o.put("device", deviceName());
             o.put("lock", activity.lockEnabled());
             o.put("lockAvailable", activity.lockAvailable());
+            boolean ts = false;
+            if (p != null) for (String h : p.hosts) ts |= isTailscale(h);
+            o.put("tailscale", ts);
+            o.put("tailscaleApp", tailscaleInstalled());
+            o.put("relay", p != null && Relay.valid(p.relayUrl, p.relayId));
             return o.toString();
         } catch (Exception e) {
             return "{}";
@@ -219,6 +360,10 @@ final class Bridge {
                 Pinned.Response r = n.request(method, path, p.token, body == null || body.isEmpty() ? null : body, 100000);
                 rememberHost();
                 if (r.status == 401) forgetLocally();
+                if (r.status == 200 && path.equals("/api/state")) {
+                    updateHosts(r.text());
+                    afterState(r.text());
+                }
                 js("window.__native(" + q(id) + "," + r.status + "," + q(r.text()) + ")");
             } catch (Exception e) {
                 js("window.__native(" + q(id) + ",0," + q(errorJson(e)) + ")");
@@ -247,6 +392,42 @@ final class Bridge {
                 js("window.__native(" + q(id) + ",0," + q(errorJson(e)) + ")");
             }
         });
+    }
+
+    /** The screenshot on the page saved into the gallery (Pictures/Astra Remote); answers with a toast. */
+    @JavascriptInterface
+    public void saveImage(final String base64) {
+        ui.post(() -> activity.withStorage(() -> pool.execute(() -> {
+            String msg;
+            try {
+                byte[] jpg = Base64.decode(base64, Base64.DEFAULT);
+                String name = "ПК " + new java.text.SimpleDateFormat("yyyy-MM-dd HH-mm-ss", java.util.Locale.US).format(new java.util.Date()) + ".jpg";
+                ContentResolver cr = activity.getContentResolver();
+                if (Build.VERSION.SDK_INT >= 29) {
+                    ContentValues v = new ContentValues();
+                    v.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+                    v.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+                    v.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Astra Remote");
+                    Uri u = cr.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v);
+                    if (u == null) throw new IOException("Не удалось сохранить в галерею");
+                    try (OutputStream o = cr.openOutputStream(u)) {
+                        o.write(jpg);
+                    }
+                } else {
+                    File dir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "Astra Remote");
+                    if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("Нет доступа к галерее");
+                    File f = new File(dir, name);
+                    try (OutputStream o = new FileOutputStream(f)) {
+                        o.write(jpg);
+                    }
+                    MediaScannerConnection.scanFile(activity, new String[]{f.getAbsolutePath()}, new String[]{"image/jpeg"}, null);
+                }
+                msg = "Снимок сохранён в галерею";
+            } catch (Exception e) {
+                msg = message(e);
+            }
+            js("window.toast&&toast(" + q(msg) + ")");
+        })));
     }
 
     /** A chat message; the reply comes as __chat(id, jsonLine) per line and __chat(id, null) at the end. */
@@ -330,14 +511,7 @@ final class Bridge {
         if (!"1".equals(u.getQueryParameter("v"))) {
             throw new IllegalArgumentException("QR-код от другой версии плагина — обнови приложение");
         }
-        List<String> hosts = new ArrayList<>();
-        for (String h : String.valueOf(u.getQueryParameter("h")).split(",")) {
-            java.util.regex.Matcher m = IPV4.matcher(h.trim());
-            if (!m.matches()) continue;
-            boolean ok = true;
-            for (int i = 1; i <= 4; i++) ok &= Integer.parseInt(m.group(i)) <= 255;
-            if (ok) hosts.add(h.trim());
-        }
+        List<String> hosts = validHosts(java.util.Arrays.asList(String.valueOf(u.getQueryParameter("h")).split(",")));
         int port;
         try {
             port = Integer.parseInt(String.valueOf(u.getQueryParameter("p")));
@@ -354,6 +528,11 @@ final class Bridge {
         d.pairing.hosts = hosts.toArray(new String[0]);
         d.pairing.port = port;
         d.pairing.fingerprint = fp;
+        String ru = u.getQueryParameter("r"), ri = u.getQueryParameter("i");
+        if (Relay.valid(ru, ri)) {
+            d.pairing.relayUrl = ru;
+            d.pairing.relayId = ri;
+        }
         String name = u.getQueryParameter("n");
         d.pairing.pcName = name == null || name.trim().isEmpty() ? "ПК" : name.trim().substring(0, Math.min(64, name.trim().length()));
         d.secret = secret;
@@ -399,8 +578,10 @@ final class Bridge {
         final String name = pairName.isEmpty() ? deviceName() : pairName;
         pairEvent("connecting", d.pairing.pcName, null);
         pool.execute(() -> {
+            // pairing works away from home too, when the PC has a relay; this one is only for the pairing
+            final Relay pr = Relay.valid(d.pairing.relayUrl, d.pairing.relayId) ? new Relay(d.pairing.relayUrl, d.pairing.relayId) : null;
             try {
-                Pinned n = new Pinned(d.pairing.hosts, d.pairing.port, d.pairing.fingerprint, "");
+                Pinned n = new Pinned(d.pairing.hosts, d.pairing.port, d.pairing.fingerprint, "", pr);
                 JSONObject req = new JSONObject();
                 req.put("secret", d.secret);
                 req.put("name", name);
@@ -429,6 +610,11 @@ final class Bridge {
                         d.pairing.lastHost = n.currentHost();
                         vault.save(d.pairing);
                         setPairing(d.pairing);
+                        Remote.prefs(activity).edit().remove("lastNote").remove("widget").apply(); // a new PC: old notes are not news
+                        ui.post(() -> {
+                            activity.askNotifications();
+                            Remote.scheduleNotes(activity);
+                        });
                         pairEvent("ok", d.pairing.pcName, null);
                         return;
                     }
@@ -439,6 +625,7 @@ final class Bridge {
             } catch (Exception e) {
                 if (!a.cancelled) pairEvent("error", message(e), null);
             } finally {
+                if (pr != null) pr.close();
                 if (attempt == a) attempt = null;
             }
         });
@@ -449,6 +636,35 @@ final class Bridge {
         PairAttempt a = attempt;
         if (a != null) a.cancelled = true;
         attempt = null;
+    }
+
+    // ── Tailscale ───────────────────────────────────────────────────────────
+
+    private boolean tailscaleInstalled() {
+        try {
+            activity.getPackageManager().getPackageInfo(TAILSCALE, 0);
+            return true;
+        } catch (PackageManager.NameNotFoundException e) {
+            return false;
+        }
+    }
+
+    /** Open Tailscale on the phone, or its Google Play page if it is not installed. */
+    @JavascriptInterface
+    public void openTailscale() {
+        ui.post(() -> {
+            Intent i = activity.getPackageManager().getLaunchIntentForPackage(TAILSCALE);
+            if (i == null) i = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + TAILSCALE));
+            try {
+                activity.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            } catch (Exception e) {
+                try {
+                    activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + TAILSCALE))
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (Exception ignored) {
+                }
+            }
+        });
     }
 
     // ── clipboard ───────────────────────────────────────────────────────────
@@ -544,6 +760,165 @@ final class Bridge {
         byte[] buf = new byte[64 * 1024];
         int n;
         while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+    }
+
+    // ── voice ───────────────────────────────────────────────────────────────
+    // Speaking to Astra goes through the phone's recogniser (MainActivity.startListen); her reply is read
+    // out by the phone's own text-to-speech, and the page moves the avatar's mouth while it plays.
+
+    private android.speech.tts.TextToSpeech tts;
+    private volatile boolean ttsReady;
+
+    @JavascriptInterface
+    public void listen() {
+        ui.post(activity::startListen);
+    }
+
+    void onHeard(String text, String error) {
+        try {
+            JSONObject o = new JSONObject();
+            if (text != null) o.put("text", text);
+            if (error != null) o.put("error", error);
+            event("__heard", o);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void speakingEvent(boolean on) {
+        js("window.__speaking&&window.__speaking(" + on + ")");
+    }
+
+    @JavascriptInterface
+    public void speak(final String text) {
+        ui.post(() -> {
+            if (text == null || text.trim().isEmpty()) return;
+            if (tts == null) {
+                tts = new android.speech.tts.TextToSpeech(activity, status -> {
+                    ttsReady = status == android.speech.tts.TextToSpeech.SUCCESS;
+                    if (ttsReady) {
+                        tts.setLanguage(new java.util.Locale("ru", "RU"));
+                        tts.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
+                            @Override public void onStart(String id) { speakingEvent(true); }
+                            @Override public void onDone(String id) { if (!tts.isSpeaking()) speakingEvent(false); }
+                            @Override public void onError(String id) { speakingEvent(false); }
+                        });
+                        say(text);
+                    }
+                });
+            } else if (ttsReady) {
+                say(text);
+            }
+        });
+    }
+
+    private void say(String text) {
+        // the engine takes a few thousand characters at a time: long replies go in pieces
+        String t = text.replaceAll("[*_`#>]+", " ");
+        int max = Math.max(500, android.speech.tts.TextToSpeech.getMaxSpeechInputLength() - 100);
+        boolean first = true;
+        for (int i = 0; i < t.length(); i += max) {
+            tts.speak(t.substring(i, Math.min(t.length(), i + max)), first ? android.speech.tts.TextToSpeech.QUEUE_FLUSH : android.speech.tts.TextToSpeech.QUEUE_ADD,
+                    null, "astra-" + i);
+            first = false;
+        }
+    }
+
+    @JavascriptInterface
+    public void stopSpeaking() {
+        ui.post(() -> {
+            if (tts != null) tts.stop();
+            speakingEvent(false);
+        });
+    }
+
+    // ── the avatar ──────────────────────────────────────────────────────────
+    // The model the character wears in Astra and its pack's motions, kept in the app's own private folder
+    // (no other app reads it, it is not backed up) and gone when the phone is unpaired. The model comes
+    // down once: it is asked for again only when its SHA-256 on the PC changes.
+
+    private static final Pattern CLIP_NAME = Pattern.compile("^[A-Za-z0-9_.-]{1,80}$");
+
+    File avatarDir() {
+        return new File(activity.getFilesDir(), "avatar");
+    }
+
+    /** The file behind a page URL /avatar/…, or null: only the model and clips/<name>.vrma exist there. */
+    File avatarFile(String rel) {
+        if ("model.vrm".equals(rel)) return new File(avatarDir(), "model.vrm");
+        if (rel != null && rel.startsWith("clips/") && rel.endsWith(".vrma")) {
+            String name = rel.substring(6, rel.length() - 5);
+            if (CLIP_NAME.matcher(name).matches()) return new File(new File(avatarDir(), "clips"), name + ".vrma");
+        }
+        return null;
+    }
+
+    private static String readStamp(File f) {
+        try (InputStream in = new java.io.FileInputStream(f)) {
+            return new String(Pinned.readAll(in), StandardCharsets.UTF_8).trim();
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    private static void deleteTree(File f) {
+        File[] kids = f.listFiles();
+        if (kids != null) for (File k : kids) deleteTree(k);
+        //noinspection ResultOfMethodCallIgnored
+        f.delete();
+    }
+
+    /**
+     * Make sure the model ("model") or a motion ("clip", name) is here, fetching it if its stamp (the
+     * model's SHA-256, a clip's size) differs; answers __native(id, 200, page URL). The model's progress
+     * comes as __avatarProgress(done, total).
+     */
+    @JavascriptInterface
+    public void avatarFetch(final String id, final String what, final String name, final String stamp) {
+        final Pinned n = net;
+        final Vault.Pairing p = pairing;
+        if (n == null || p == null) {
+            js("window.__native(" + q(id) + ",401,\"\")");
+            return;
+        }
+        pool.execute(() -> {
+            HttpsURLConnection c = null;
+            try {
+                boolean model = "model".equals(what);
+                if (!model && !CLIP_NAME.matcher(String.valueOf(name)).matches()) throw new IOException("bad clip name");
+                String rel = model ? "model.vrm" : "clips/" + name + ".vrma";
+                File f = avatarFile(rel);
+                File st = new File(f.getPath() + ".stamp");
+                if (!(f.isFile() && String.valueOf(stamp).equals(readStamp(st)))) {
+                    //noinspection ResultOfMethodCallIgnored
+                    f.getParentFile().mkdirs();
+                    c = n.connect("GET", model ? "/api/avatar/model" : "/api/avatar/clip?name=" + URLEncoder.encode(name, "UTF-8"), p.token, null, 120000);
+                    int code = c.getResponseCode();
+                    if (code != 200) {
+                        Pinned.Response r = Pinned.response(c);
+                        if (code == 401) forgetLocally();
+                        throw new IOException(errorOf(r));
+                    }
+                    final long total = c.getContentLengthLong();
+                    File tmp = new File(f.getPath() + ".part");
+                    try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(tmp)) {
+                        final Progress[] pr = new Progress[1];
+                        pr[0] = new Progress(out, () -> {
+                            if (model) js("window.__avatarProgress&&window.__avatarProgress(" + pr[0].count + "," + total + ")");
+                        });
+                        copy(in, pr[0]);
+                    }
+                    if (f.exists() && !f.delete() || !tmp.renameTo(f)) throw new IOException("Не удалось сохранить модель");
+                    try (OutputStream o = new FileOutputStream(st)) {
+                        o.write(String.valueOf(stamp).getBytes(StandardCharsets.UTF_8));
+                    }
+                }
+                js("window.__native(" + q(id) + ",200," + q("https://" + MainActivity.HOST + "/avatar/" + rel) + ")");
+            } catch (Exception e) {
+                js("window.__native(" + q(id) + ",0," + q(errorJson(e)) + ")");
+            } finally {
+                if (c != null) c.disconnect();
+            }
+        });
     }
 
     /** Files picked in the app or shared to it from another app: each goes to the PC's shared folder. */

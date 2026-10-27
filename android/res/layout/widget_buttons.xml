@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="horizontal"
+    android:padding="6dp"
+    android:background="@drawable/widget_bg">
+    <Button android:id="@+id/b1" style="@style/WidgetButton" />
+    <Button android:id="@+id/b2" style="@style/WidgetButton" />
+    <Button android:id="@+id/b3" style="@style/WidgetButton" />
+    <Button android:id="@+id/b4" style="@style/WidgetButton" />
+</LinearLayout>

@@ -31,6 +31,8 @@ final class Vault {
         String token;
         String pcName;
         String lastHost = "";
+        String relayUrl = ""; // wss://… — the relay, if the PC uses one
+        String relayId = "";  // this PC's id on it
 
         JSONObject toJson() throws Exception {
             JSONObject o = new JSONObject();
@@ -40,6 +42,8 @@ final class Vault {
             o.put("token", token);
             o.put("pc", pcName);
             o.put("last", lastHost);
+            o.put("ru", relayUrl);
+            o.put("ri", relayId);
             return o;
         }
 
@@ -51,6 +55,8 @@ final class Vault {
             p.token = o.optString("token");
             p.pcName = o.optString("pc");
             p.lastHost = o.optString("last");
+            p.relayUrl = o.optString("ru");
+            p.relayId = o.optString("ri");
             return p;
         }
     }

@@ -28,7 +28,9 @@ const canonical = (v) => Array.isArray(v) ? `[${v.map(canonical).join(",")}]`
   : v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + canonical(v[k])).join(",")}}`
   : JSON.stringify(v);
 
-const fileList = ["LICENSE", "README.md", "dist/index.js", "icon.svg", "plugin.toml", "ui/index.html", "ui/app.js"];
+// Astra wants MANIFEST.files sorted byte-wise by path
+const fileList = ["LICENSE", "README.md", "dist/index.js", "icon.svg", "plugin.toml", "ui/index.html", "ui/app.js"]
+  .sort((a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b)));
 const read = (p) => fs.readFileSync(path.join(root, p));
 const files = fileList.map((p) => ({ path: p, sha256: crypto.createHash("sha256").update(read(p)).digest("hex"), size: read(p).length, mode: "0644" }));
 const manifest = {

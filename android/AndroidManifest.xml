@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="tech.taill.astraremote"
-    android:versionCode="1"
-    android:versionName="0.1.0">
+    android:versionCode="6"
+    android:versionName="0.5.0">
 
     <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35" />
 
@@ -10,9 +10,21 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- notes Astra sends to the phone (Android 13+ asks the owner first) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 14+: a job that waits for a network (the notes check) needs this, or scheduling it throws -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Android 8–9 only: saving a file from the PC into Downloads -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- to tell whether Tailscale is on the phone and open it (away from home the PC is reached through it) -->
+    <queries>
+        <package android:name="com.tailscale.ipn" />
+        <!-- speaking to Astra and hearing her reply: the phone's recogniser and text-to-speech engine -->
+        <intent><action android:name="android.speech.action.RECOGNIZE_SPEECH" /></intent>
+        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+    </queries>
 
     <!-- no cloud backup: the device key must never leave the phone -->
     <application
@@ -46,6 +58,27 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+
+        <!-- the home-screen widget: the first four buttons of the remote -->
+        <receiver android:name=".ButtonsWidget" android:exported="false" android:label="Astra Remote: кнопки">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_buttons" />
+        </receiver>
+
+        <!-- quick settings tiles -->
+        <service android:name=".MediaTile" android:exported="true" android:label="Пауза на ПК"
+            android:icon="@drawable/ic_tile_play" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+        <service android:name=".LockTile" android:exported="true" android:label="Заблокировать ПК"
+            android:icon="@drawable/ic_tile_lock" android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>
+
+        <!-- checks for notes from Astra while the app is closed (Android runs it about every 15 minutes) -->
+        <service android:name=".NotesJob" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <activity
             android:name=".ScanActivity"

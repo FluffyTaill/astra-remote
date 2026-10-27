@@ -11,6 +11,8 @@ import * as crypto from "node:crypto";
 import * as pc from "./pc.js";
 import * as store from "./store.js";
 import * as files from "./files.js";
+import { relayedIp } from "./relay.js";
+import * as avatar from "./avatar.js";
 
 const MAX_BODY = 128 * 1024; // JSON only; files stream past this
 
@@ -25,10 +27,14 @@ function isPrivate(ip) {
   return a === 10 || a === 127 || (a === 172 && b >= 16 && b < 32) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b < 128);
 }
 
-// This PC's IPv4 addresses a phone could reach. 100.64.0.0/10 is Tailscale's range.
+// This PC's IPv4 addresses a phone could reach. 100.64.0.0/10 is Tailscale's range. Virtual adapters
+// (WSL, Hyper-V, VirtualBox, VMware, Docker) are left out: no phone gets there, and each dead address
+// costs the app a connect timeout.
+const VIRTUAL = /vEthernet|WSL|Hyper-V|VirtualBox|VMware|Docker|Loopback/i;
 export function addresses() {
   const out = [];
   for (const [name, list] of Object.entries(os.networkInterfaces())) {
+    if (VIRTUAL.test(name)) continue;
     for (const a of list || []) {
       if (a.family !== "IPv4" || a.internal || !isPrivate(a.address)) continue;
       const [x, y] = a.address.split(".").map(Number);
@@ -68,7 +74,12 @@ function allow(deviceId) {
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-const ipOf = (req) => String(req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+// a phone that came through the relay arrives from 127.0.0.1: its own address is the one the relay saw
+const ipOf = (req) => {
+  const ip = String(req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+  const relayed = ip === "127.0.0.1" ? relayedIp(req.socket.remotePort) : "";
+  return relayed ? "relay:" + relayed : ip;
+};
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 
 function send(res, code, body, type = "application/json; charset=utf-8") {
@@ -119,9 +130,15 @@ export function createServer(deps) {
         pc.volume().catch(() => null), pc.nowPlaying(), cfg.allow_screenshot ? pc.screens().catch(() => 1) : 0
       ]);
       return {
-        device: { name: dev.name, expires: store.expiresAt(dev, cfg.key_days) }, system: pc.system(), volume: vol, media, screens,
+        device: { name: dev.name, expires: store.expiresAt(dev, cfg.key_days) }, system: { ...pc.system(), ...pc.moreStats() }, volume: vol, media, screens,
+        notes: store.notes().slice(0, 1).map((n) => n.id)[0] || 0, // the newest note: the app fetches what it has not seen
         buttons: store.buttons().filter((b) => b.label),
         sent: cfg.allow_files ? store.sent() : [],
+        // where this PC can be reached right now: the app updates its list, so a new home IP or a
+        // Tailscale installed after pairing does not mean pairing again (the certificate pin still decides)
+        endpoints: addresses().map((a) => a.address),
+        // and from anywhere, through the relay — same pinned TLS, the relay only carries the bytes
+        relay: deps.relay?.() || null,
         allow: {
           screenshot: !!cfg.allow_screenshot, power: !!cfg.allow_power, shutdown: !!cfg.allow_shutdown, chat: !!cfg.allow_chat,
           files: !!cfg.allow_files, clipboard: !!cfg.allow_clipboard, open_url: !!cfg.allow_open_url, confirm: !!cfg.confirm_shutdown
@@ -181,9 +198,24 @@ export function createServer(deps) {
       store.logAction(dev, "открыл ссылку " + new URL(String(body.url)).host);
       return { ok: true };
     },
+    // the shared folder (or a folder inside it) opened on the PC's screen, in Explorer
+    "POST /api/files/open": async (body, dev) => {
+      need("allow_files", "Обмен файлами выключен в настройках плагина");
+      const dir = files.resolveDir(deps.config(), String(body.path || ""));
+      pc.openFolder(dir);
+      store.logAction(dev, "открыл общую папку на ПК");
+      return { ok: true };
+    },
     "GET /api/files": async (_b, _dev, url) => {
       need("allow_files", "Обмен файлами выключен в настройках плагина");
       return files.list(deps.config(), url.searchParams.get("path"));
+    },
+    // the avatar: the worn character's model and its pack's VRMA motions (the files come below, streamed)
+    "GET /api/avatar": async () => avatar.info() || { none: true },
+    // notes Astra left for the phone, newer than the one it has
+    "GET /api/notes": async (_b, _dev, url) => {
+      const since = Number(url.searchParams.get("since")) || 0;
+      return { notes: store.notes().filter((n) => n.id > since).slice(0, 20) };
     },
     "POST /api/unpair": async (_b, dev) => {
       store.logAction(dev, "отключился сам");
@@ -245,6 +277,15 @@ export function createServer(deps) {
         return send(res, 200, img, "image/jpeg");
       }
 
+      if (key === "GET /api/avatar/model" || key === "GET /api/avatar/clip") {
+        const file = key.endsWith("model") ? avatar.modelFile() : avatar.clipFile(url.searchParams.get("name"));
+        const size = fs.statSync(file).size;
+        res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": size, "Cache-Control": "no-store" });
+        const st = fs.createReadStream(file);
+        st.on("error", () => res.destroy());
+        return st.pipe(res);
+      }
+
       if (key === "GET /api/files/download") {
         need("allow_files", "Обмен файлами выключен в настройках плагина");
         const f = files.openForDownload(deps.config(), url.searchParams.get("path"));
@@ -302,6 +343,8 @@ export function createServer(deps) {
     if (!isPrivate(socket.remoteAddress)) socket.destroy();
   });
   server.requestTimeout = 0; // a chat reply may stream for minutes
+  // the app keeps its connection between requests: through the relay a new one costs a tunnel and a TLS handshake
+  server.keepAliveTimeout = 60000;
   server.headersTimeout = 20000;
   return server;
 }

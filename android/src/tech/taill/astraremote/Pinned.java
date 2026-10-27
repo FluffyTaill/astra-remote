@@ -49,13 +49,15 @@ final class Pinned {
 
     private final String[] hosts;
     private final int port;
+    private final Relay relay; // null: home network and Tailscale only
     private final SSLSocketFactory factory;
     private volatile String current;
 
-    Pinned(String[] hosts, int port, final String fingerprint, String lastHost) {
+    Pinned(String[] hosts, int port, final String fingerprint, String lastHost, Relay relay) {
         this.hosts = hosts;
         this.port = port;
-        this.current = lastHost != null && !lastHost.isEmpty() ? lastHost : hosts[0];
+        this.relay = relay;
+        this.current = lastHost != null && !lastHost.isEmpty() && (relay != null || !Relay.HOST.equals(lastHost)) ? lastHost : hosts[0];
         final byte[] pin = fingerprint.toLowerCase().getBytes(StandardCharsets.US_ASCII);
         try {
             TrustManager tm = new X509TrustManager() {
@@ -100,7 +102,9 @@ final class Pinned {
     }
 
     private HttpsURLConnection open(String host, String method, String path, String token, int readTimeoutMs) throws IOException {
-        HttpsURLConnection c = (HttpsURLConnection) new URL("https://" + host + ":" + port + path).openConnection();
+        // the relay is a port of this app on 127.0.0.1 that leads to the PC (see Relay); the TLS is still the PC's
+        String where = Relay.HOST.equals(host) ? "127.0.0.1:" + relay.port() : host + ":" + port;
+        HttpsURLConnection c = (HttpsURLConnection) new URL("https://" + where + path).openConnection();
         c.setSSLSocketFactory(factory);
         c.setHostnameVerifier((h, s) -> true); // see the class comment: the certificate pin is the check
         c.setRequestMethod(method);
@@ -124,6 +128,7 @@ final class Pinned {
         List<String> order = new ArrayList<>();
         order.add(current);
         for (String h : hosts) if (!h.equals(current)) order.add(h);
+        if (relay != null && !order.contains(Relay.HOST)) order.add(Relay.HOST); // from anywhere, last unless it worked last time
         for (String host : order) {
             HttpsURLConnection c = open(host, method, path, token, readTimeoutMs);
             if (body != null) {
@@ -152,6 +157,7 @@ final class Pinned {
             return c;
         }
         if (mismatch) throw new IOException(MISMATCH);
+        if (relay != null && relay.offline) throw new IOException(Relay.OFFLINE);
         throw last != null ? last : new IOException("no address");
     }
 
@@ -167,9 +173,12 @@ final class Pinned {
     Response request(String method, String path, String token, String json, int readTimeoutMs) throws IOException {
         HttpsURLConnection c = connect(method, path, token, json == null ? null : json.getBytes(StandardCharsets.UTF_8), readTimeoutMs);
         try {
+            // read to the end and close the stream, but no disconnect(): the connection goes back to the
+            // pool for the next request — through the relay that saves a new tunnel and TLS each time
             return response(c);
-        } finally {
+        } catch (IOException e) {
             c.disconnect();
+            throw e;
         }
     }
 

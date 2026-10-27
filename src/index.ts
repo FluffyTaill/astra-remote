@@ -13,6 +13,7 @@
 import * as os from "node:os";
 import { plugin, tool, s } from "astra-plugin-sdk";
 import { createServer, addresses, certFingerprint } from "./server.js";
+import { startRelay } from "./relay.js";
 import * as pc from "./pc.js";
 import * as store from "./store.js";
 import * as files from "./files.js";
@@ -20,8 +21,15 @@ import { qrSvg } from "./qr.js";
 
 const DEFAULTS = {
   port: 8765, allow_chat: true, allow_screenshot: true, allow_power: true, allow_shutdown: false, confirm_shutdown: true,
-  allow_files: true, shared_folder: "", max_upload_mb: 2048, allow_clipboard: true, allow_open_url: true, key_days: 90
+  allow_files: true, shared_folder: "", max_upload_mb: 2048, allow_clipboard: true, allow_open_url: true, key_days: 90,
+  keep_awake: false, relay_url: ""
 };
+
+// "Don't sleep" holds only while at least one phone is paired: no phone, no reason to keep the PC up.
+let awakeTimer = null;
+function applyKeepAwake() {
+  pc.keepAwake(!!config().keep_awake && store.devices().length > 0).catch(() => {});
+}
 
 let ctxRef = null;
 let server = null;
@@ -35,8 +43,38 @@ function config() {
   for (const k of Object.keys(DEFAULTS)) if (c[k] !== undefined && c[k] !== null) out[k] = c[k];
   out.port = Math.max(1024, Math.min(65535, Number(out.port) || DEFAULTS.port));
   out.key_days = Math.max(0, Math.round(Number(out.key_days)) || 0);
+  // the address saved on the plugin page wins; the settings field is the other way to give it
+  out.relay_url = relayUrl(store.relayUrlSaved()) || relayUrl(out.relay_url);
   return out;
 }
+
+// "https://x.workers.dev" or "wss://…" → "wss://x.workers.dev"; anything else → "" (relay off)
+function relayUrl(v) {
+  const t = String(v || "").trim().replace(/\/+$/, "");
+  if (!t) return "";
+  try {
+    const u = new URL(/^[a-z]+:\/\//i.test(t) ? t : "https://" + t);
+    if (!/^(https|wss):$/.test(u.protocol) || u.pathname !== "/" && u.pathname !== "") return "";
+    return "wss://" + u.host;
+  } catch {
+    return "";
+  }
+}
+
+// ── the relay: the way in from outside the home ─────────────────────────────
+let relay = null, relayFor = "";
+function applyRelay() {
+  const url = config().relay_url;
+  if (relay && relayFor === url) return;
+  relay?.stop();
+  relay = null;
+  relayFor = url;
+  if (!url) return;
+  const { id, key } = store.relayIdentity();
+  relay = startRelay({ url, id, key, port: () => listening.port, log: (m) => ctxRef?.info(m).catch(() => {}) });
+}
+// what the phone needs to come through it: the relay and this PC's id on it (no secret: the TLS pin is the check)
+const relayInfo = () => (relay ? { url: relayFor, id: store.relayIdentity().id } : null);
 
 async function* chat(text, fresh) {
   if (fresh) conversationId = "";
@@ -80,6 +118,7 @@ async function startServer() {
     config,
     fireButton: (n) => ctxRef.fireTrigger(`button_${n}`, { button: String(n) }),
     chat,
+    relay: relayInfo,
     onChange: () => {}
   });
   server = s;
@@ -110,7 +149,10 @@ function sharedFolder() {
 function pageState(ctx) {
   const active = [...(ctx?.activeTriggers || [])];
   return {
-    port: listening.port, error: listening.error, addresses: addresses(), config: config(), fingerprint,
+    // not "error": the SDK takes an object with an "error" key for a { resultJson, error } wrapper and drops the rest
+    port: listening.port, serverError: listening.error, addresses: addresses(), config: config(), fingerprint,
+    relay: relay ? { url: relayFor, ...relay.state() } : null,
+    relayId: store.relayIdentity().id, // for a private relay's ALLOWED_PCS (relay/README.md)
     pairing: store.pairState(), actions: store.recentActions(), folder: sharedFolder(),
     devices: store.devices().map((d) => ({ ...d, expires: store.expiresAt(d, config().key_days) })),
     buttons: store.buttons().map((b) => ({ ...b, bound: active.some((a) => a === `button_${b.n}` || a.endsWith(`__button_${b.n}`)) }))
@@ -123,6 +165,8 @@ function pairLink(secret) {
   const q = new URLSearchParams({
     v: "1", h: addresses().map((a) => a.address).join(","), p: String(listening.port), f: fingerprint, s: secret, n: os.hostname()
   });
+  // The relay is not in it: its address would make the code too dense for a phone camera, and the
+  // phone learns it from /api/state right after pairing, over the pinned connection.
   return "astraremote://pair?" + q.toString();
 }
 
@@ -147,6 +191,19 @@ export const app = plugin({
         return `Sent ${items.length} file(s) to the phone: ${items.slice(0, 10).map((x) => x.name).join(", ")}${items.length > 10 ? "…" : ""}. They are in the Astra Remote app under Files.`;
       }
     }),
+    notify_phone: tool({
+      description: "Show a notification on the user's phone (the Astra Remote app). Use when the user asks to be told or reminded of something on their phone, or to get a message there when a task finishes.",
+      input: s.object({
+        text: s.string({ description: "The notification text, short" }),
+        title: s.string({ description: "Optional title; default \"Astra\"" }).optional()
+      }),
+      run: ({ text, title }) => {
+        if (!store.devices().length) throw new Error("No phone is paired with Astra Remote yet");
+        store.addNote(title || "Astra", text);
+        store.logAction({ name: "Astra" }, "уведомление на телефон");
+        return "The notification is queued for the phone. It shows as soon as the app checks in (at once while it is open, otherwise within about 15 minutes).";
+      }
+    }),
     list_phone_uploads: tool({
       description: "List the files the user recently sent from their phone to this PC with the Astra Remote app (newest first), with full paths, so you can open or work with them.",
       run: () => {
@@ -162,13 +219,20 @@ export const app = plugin({
     ctxRef = ctx;
     store.load();
     pc.warmUp();
+    applyKeepAwake();
+    awakeTimer = setInterval(applyKeepAwake, 4 * 60 * 1000);
     await startServer();
+    applyRelay();
   },
   onConfigChanged: async (_cfg, ctx) => {
     ctxRef = ctx;
     await startServer();
+    applyRelay();
+    applyKeepAwake();
   },
   onShutdown: async () => {
+    clearInterval(awakeTimer);
+    relay?.stop();
     stopServer();
     pc.stopWorker();
   },
@@ -194,10 +258,12 @@ export const app = plugin({
       },
       answerPairing: async (p, ctx) => {
         store.answerPairing(String(p.id), !!p.allow);
+        applyKeepAwake();
         return pageState(ctx);
       },
       revoke: async (p, ctx) => {
         store.revoke(String(p.id));
+        applyKeepAwake();
         return pageState(ctx);
       },
       updateDevice: async (p, ctx) => {
@@ -207,6 +273,27 @@ export const app = plugin({
       setButton: async (p, ctx) => {
         store.setButton(p.n, p.patch || {});
         return pageState(ctx);
+      },
+      // the relay address from the plugin page: "" turns it off
+      setRelay: async (p, ctx) => {
+        const raw = String(p.url || "").trim();
+        if (raw && !relayUrl(raw)) throw new Error("Это не похоже на адрес ретранслятора: нужен https://…workers.dev");
+        store.saveRelayUrl(raw);
+        applyRelay();
+        return pageState(ctx);
+      },
+      // a link from the plugin page (the Deploy to Cloudflare button), in the default browser
+      openUrl: async (p) => {
+        const url = String(p.url || "");
+        if (!/^https:\/\/(deploy\.workers\.cloudflare\.com|github\.com|dash\.cloudflare\.com)\//.test(url)) throw new Error("Эту ссылку плагин не открывает");
+        await pc.openUrl(url);
+        return true;
+      },
+      openFolder: async () => {
+        const f = sharedFolder();
+        if (!f) throw new Error("Обмен файлами выключен в настройках плагина");
+        pc.openFolder(f);
+        return true;
       },
       testButton: async (p, ctx) => {
         await ctx.fireTrigger(`button_${Number(p.n)}`, { button: String(p.n) });
