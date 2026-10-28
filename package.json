@@ -1,6 +1,6 @@
 {
   "name": "astra-remote",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Astra plugin: control this PC and talk to Astra from your phone",
   "license": "MIT",
   "author": "Taill",

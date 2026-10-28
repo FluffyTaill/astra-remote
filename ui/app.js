@@ -93,7 +93,7 @@ function remoteHint(s, addrs) {
 }
 
 // ── the relay card: each user runs their own (relay/README.md) ──────────────
-const DEPLOY = "https://deploy.workers.cloudflare.com/?url=https://github.com/FluffyTaill/astra-remote/tree/main/relay";
+const DEPLOY = "https://deploy.workers.cloudflare.com/?url=https://github.com/FluffyTaill/astra-remote";
 function paintRelay() {
   const box = $("#relayCard");
   if (!box) return;

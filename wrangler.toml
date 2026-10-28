@@ -1,0 +1,15 @@
+# The relay (relay/worker.js), deployable from the repository's root too: Cloudflare's "Deploy" and
+# "Clone a repository" forms take https://github.com/FluffyTaill/astra-remote as it is. The same as
+# relay/wrangler.toml, which is for deploying from that folder by hand (npx wrangler deploy).
+name = "astra-remote-relay"
+main = "relay/worker.js"
+compatibility_date = "2025-06-01"
+
+[[durable_objects.bindings]]
+name = "PC"
+class_name = "PcRoom"
+
+# SQLite-backed Durable Objects are what the Workers Free plan offers
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PcRoom"]

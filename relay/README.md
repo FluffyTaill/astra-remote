@@ -11,10 +11,12 @@
 
 ### Кнопкой
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/FluffyTaill/astra-remote/tree/main/relay)
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/FluffyTaill/astra-remote)
 
 1. Нажми кнопку (она есть и на странице плагина в Astra), войди в Cloudflare или заведи бесплатный аккаунт, подтверди.
-2. Cloudflare создаст копию репозитория у тебя на GitHub и развернёт ретранслятор.
+2. Cloudflare создаст копию репозитория у тебя на GitHub и развернёт ретранслятор. Если он покажет форму
+   «Клонировать репозиторий» и попросит адрес — вставь `https://github.com/FluffyTaill/astra-remote`
+   (без `/tree/...` в конце) и нажми «Развернуть».
 3. Скопируй его адрес (`https://astra-remote-relay.<твоё-имя>.workers.dev`) на страницу Phone Remote в Astra —
    карточка «Вне дома: свой ретранслятор» → «Сохранить».
 4. Открой приложение на телефоне дома, в той же сети, что ПК: оно само узнает адрес.
