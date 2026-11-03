@@ -31,8 +31,8 @@ final class Vault {
         String token;
         String pcName;
         String lastHost = "";
-        String relayUrl = ""; // wss://… — the relay, if the PC uses one
-        String relayId = "";  // this PC's id on it
+        String tunaUrl = ""; // public HTTPS origin, never account credentials
+        String tunaKey = "";  // transport capability, not API authorization
 
         JSONObject toJson() throws Exception {
             JSONObject o = new JSONObject();
@@ -42,21 +42,23 @@ final class Vault {
             o.put("token", token);
             o.put("pc", pcName);
             o.put("last", lastHost);
-            o.put("ru", relayUrl);
-            o.put("ri", relayId);
+            o.put("tu", tunaUrl);
+            o.put("tk", tunaKey);
             return o;
         }
 
         static Pairing fromJson(JSONObject o) {
             Pairing p = new Pairing();
-            p.hosts = o.optString("hosts").split(",");
+            p.hosts = Endpoint.valid(java.util.Arrays.asList(o.optString("hosts").split(","))).toArray(new String[0]);
             p.port = o.optInt("port");
             p.fingerprint = o.optString("fp");
             p.token = o.optString("token");
             p.pcName = o.optString("pc");
             p.lastHost = o.optString("last");
-            p.relayUrl = o.optString("ru");
-            p.relayId = o.optString("ri");
+            p.tunaUrl = o.optString("tu");
+            p.tunaKey = o.optString("tk");
+            if (!TunaTunnel.valid(p.tunaUrl, p.tunaKey)) p.tunaUrl = p.tunaKey = "";
+            if (!java.util.Arrays.asList(p.hosts).contains(p.lastHost) && !(TunaTunnel.HOST.equals(p.lastHost) && !p.tunaUrl.isEmpty())) p.lastHost = "";
             return p;
         }
     }

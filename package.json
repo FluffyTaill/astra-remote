@@ -1,13 +1,13 @@
 {
   "name": "astra-remote",
-  "version": "0.7.1",
+  "version": "0.8.1",
   "description": "Astra plugin: control this PC and talk to Astra from your phone",
   "license": "MIT",
   "author": "Taill",
   "main": "dist/index.js",
   "scripts": {
     "build": "node build.js",
-    "test": "node --test test/server.test.mjs"
+    "test": "node --test test/server.test.mjs test/tuna.test.mjs test/qr-layout.test.cjs test/input-client.test.cjs test/input-stream.test.mjs test/file-search.test.mjs test/tasks.test.mjs test/power.test.mjs test/remote-tools.test.cjs"
   },
   "engines": {
     "node": ">=20"

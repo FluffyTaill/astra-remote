@@ -18,7 +18,7 @@ import java.io.IOException;
 
 /**
  * The PC from outside the app's screen — the widget, the quick settings tiles, the notes job: one
- * request with the pairing from {@link Vault}, over {@link Pinned} (and the relay when the PC has one),
+ * request with the pairing from {@link Vault}, over {@link Pinned} (and the tuna when the PC has one),
  * exactly as the app itself would make it. Also the notes Astra sends to the phone.
  */
 final class Remote {
@@ -30,7 +30,7 @@ final class Remote {
     static Pinned.Response call(Context ctx, String method, String path, String json) throws IOException {
         Vault.Pairing p = new Vault(ctx).load();
         if (p == null) throw new IOException("Телефон не подключён к ПК: открой Phone Remote");
-        Relay r = Relay.valid(p.relayUrl, p.relayId) ? new Relay(p.relayUrl, p.relayId) : null;
+        TunaTunnel r = TunaTunnel.valid(p.tunaUrl, p.tunaKey) ? new TunaTunnel(p.tunaUrl, p.tunaKey) : null;
         try {
             return new Pinned(p.hosts, p.port, p.fingerprint, p.lastHost, r).request(method, path, p.token, json, 20000);
         } finally {

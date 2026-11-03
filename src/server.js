@@ -1,8 +1,5 @@
-// The phone app's way in: an HTTPS server on this PC's home-network and Tailscale addresses.
-//   * TLS with this PC's own certificate; the app pins its SHA-256 from the pairing QR code.
-//   * Connections from public internet addresses are dropped before TLS starts.
-//   * Every call needs a device key, and a key is only issued after the owner allows the phone on
-//     the plugin page in Astra.
+// The phone API accepts home-network/loopback connections only; internet traffic arrives inside TUNA.
+// TLS is pinned by the phone and every API call still requires pairing/authentication.
 import * as https from "node:https";
 import * as tls from "node:tls";
 import * as os from "node:os";
@@ -11,38 +8,30 @@ import * as crypto from "node:crypto";
 import * as pc from "./pc.js";
 import * as store from "./store.js";
 import * as files from "./files.js";
-import { relayedIp } from "./relay.js";
+import { isTunaConnection } from "./tuna.js";
+import { attachInputStream } from "./input-stream.js";
+import { isLocalAddress, installLanPolicy } from "./lan.js";
 import * as avatar from "./avatar.js";
 import * as apps from "./apps.js";
+import { makeTaskManager } from "./tasks.js";
+import { createPowerManager } from "./power.js";
 
 const MAX_BODY = 128 * 1024; // JSON only; files stream past this
 
 // ── who may connect at all ──────────────────────────────────────────────────
 
-function isPrivate(ip) {
-  ip = String(ip).replace(/^::ffff:/, "");
-  if (ip === "::1") return true;
-  const m = ip.match(/^(\d+)\.(\d+)\.\d+\.\d+$/);
-  if (!m) return /^f[cd]/i.test(ip) || /^fe80:/i.test(ip); // IPv6 unique-local and link-local
-  const [a, b] = [Number(m[1]), Number(m[2])];
-  return a === 10 || a === 127 || (a === 172 && b >= 16 && b < 32) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b < 128);
-}
-
-// This PC's IPv4 addresses a phone could reach. 100.64.0.0/10 is Tailscale's range. Virtual adapters
-// (WSL, Hyper-V, VirtualBox, VMware, Docker) are left out: no phone gets there, and each dead address
-// costs the app a connect timeout.
+// Home adapter addresses; virtual adapters only waste phone connection timeouts.
 const VIRTUAL = /vEthernet|WSL|Hyper-V|VirtualBox|VMware|Docker|Loopback/i;
 export function addresses() {
   const out = [];
   for (const [name, list] of Object.entries(os.networkInterfaces())) {
     if (VIRTUAL.test(name)) continue;
     for (const a of list || []) {
-      if (a.family !== "IPv4" || a.internal || !isPrivate(a.address)) continue;
-      const [x, y] = a.address.split(".").map(Number);
-      out.push({ address: a.address, name, tailscale: x === 100 && y >= 64 && y < 128 });
+      if (a.family !== "IPv4" || a.internal || !isLocalAddress(a.address)) continue;
+      out.push({ address: a.address, name });
     }
   }
-  return out.sort((a, b) => Number(a.tailscale) - Number(b.tailscale));
+  return out;
 }
 
 // ── limits ──────────────────────────────────────────────────────────────────
@@ -75,12 +64,8 @@ function allow(deviceId) {
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-// a phone that came through the relay arrives from 127.0.0.1: its own address is the one the relay saw
-const ipOf = (req) => {
-  const ip = String(req.socket.remoteAddress || "").replace(/^::ffff:/, "");
-  const relayed = ip === "127.0.0.1" ? relayedIp(req.socket.remotePort) : "";
-  return relayed ? "relay:" + relayed : ip;
-};
+// No proxy headers are trusted. All tunneled pre-auth attempts share a stable source bucket.
+const ipOf = (req) => isTunaConnection(req.socket.remotePort) ? "TUNA" : String(req.socket.remoteAddress || "").replace(/^::ffff:/, "");
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 
 function send(res, code, body, type = "application/json; charset=utf-8") {
@@ -126,6 +111,25 @@ export function createServer(deps) {
   };
   const inputLogged = new Map(); // device → when its touchpad use was last written to the log
   const liveLogged = new Map(); // the same for the live view
+  const searches = new Map(), killChallenges = new Map();
+  const tasks = makeTaskManager({
+    list: deps.runningTasks || pc.runningTasks,
+    action: deps.taskAction || pc.taskAction,
+    state: deps.processState || pc.processState
+  });
+  const power = createPowerManager({
+    config: deps.config,
+    deviceValid(id) { const dev = store.devices().find((d) => d.id === id); return !!dev && !store.expired(dev, deps.config().key_days); },
+    processState: deps.processState || pc.processState,
+    shutdown: deps.shutdown || pc.powerNowShutdown,
+    log: (dev, text, ok = true) => store.logAction(dev, text, ok)
+  });
+  const taskTarget = async (target) => {
+    if (!target || !Number.isInteger(target.pid) || typeof target.created !== "string" || typeof target.window !== "string") throw httpError(400, "Недопустимая программа");
+    const found = (await tasks.list()).find((t) => t.pid === target.pid && t.created === target.created && t.window === target.window);
+    if (!found) throw httpError(409, "Программа уже закрыта или изменилась. Обнови список.");
+    return found;
+  };
   const routes = {
     "GET /api/state": async (_b, dev) => {
       const cfg = deps.config();
@@ -137,16 +141,16 @@ export function createServer(deps) {
         notes: store.notes().slice(0, 1).map((n) => n.id)[0] || 0, // the newest note: the app fetches what it has not seen
         buttons: store.buttons().filter((b) => b.label),
         sent: cfg.allow_files ? store.sent() : [],
-        // where this PC can be reached right now: the app updates its list, so a new home IP or a
-        // Tailscale installed after pairing does not mean pairing again (the certificate pin still decides)
         endpoints: addresses().map((a) => a.address),
-        // and from anywhere, through the relay — same pinned TLS, the relay only carries the bytes
-        relay: deps.relay?.() || null,
+        tuna: deps.tuna?.() || null,
         allow: {
           screenshot: !!cfg.allow_screenshot, power: !!cfg.allow_power, shutdown: !!cfg.allow_shutdown, chat: !!cfg.allow_chat,
           files: !!cfg.allow_files, clipboard: !!cfg.allow_clipboard, open_url: !!cfg.allow_open_url, confirm: !!cfg.confirm_shutdown,
-          input: !!cfg.allow_input, launch: !!cfg.allow_launch, voice: !!cfg.voice_to_phone
-        }
+          input: !!cfg.allow_input, launch: !!cfg.allow_launch, voice: !!cfg.voice_to_phone,
+          file_search: !!cfg.allow_file_search, tasks: !!cfg.allow_tasks,
+          remote_shutdown: !!cfg.allow_power && !!cfg.allow_shutdown && !!cfg.allow_remote_shutdown
+        },
+        powerJob: power.state()
       };
     },
     "POST /api/media": async (body, dev) => {
@@ -167,6 +171,7 @@ export function createServer(deps) {
     // the touchpad and the keyboard: a batch of events, logged once per session of use
     "POST /api/input": async (body, dev) => {
       need("allow_input", "Тачпад и клавиатура выключены в настройках плагина");
+      if (Array.isArray(body.events) && body.events.some((e) => e?.[0] === "h")) throw httpError(400, "Удерживаемые клавиши требуют постоянного канала");
       await pc.input(body.events);
       if (Date.now() - (inputLogged.get(dev.id) || 0) > 600000) store.logAction(dev, "тачпад и клавиатура");
       inputLogged.set(dev.id, Date.now());
@@ -176,7 +181,8 @@ export function createServer(deps) {
     "GET /api/screen/live": async (_b, dev, url) => {
       need("allow_screenshot", "Снимок экрана выключен в настройках плагина");
       const q = (k, d) => (url.searchParams.has(k) ? Number(url.searchParams.get(k)) : d);
-      const frame = await pc.liveFrame({ screen: q("screen", -1), width: q("w", 960), zoom: q("zoom", 1), quality: q("q", 60) });
+      const frame = await pc.liveFrame({ screen: q("screen", -1), width: q("w", 960), zoom: q("zoom", 1), quality: q("q", 60),
+        centerX: url.searchParams.has("cx") ? q("cx", 0.5) : null, centerY: url.searchParams.has("cy") ? q("cy", 0.5) : null });
       if (Date.now() - (liveLogged.get(dev.id) || 0) > 600000) store.logAction(dev, "смотрит экран в тачпаде");
       liveLogged.set(dev.id, Date.now());
       return frame;
@@ -258,6 +264,45 @@ export function createServer(deps) {
       const since = Number(url.searchParams.get("since")) || 0;
       return { notes: store.notes().filter((n) => n.id > since).slice(0, 20) };
     },
+    "GET /api/library/roots": async () => { need("allow_file_search", "Поиск файлов не разрешён на ПК"); return { roots: files.allowedRoots(deps.config()) }; },
+    "GET /api/library/list": async (_b, _dev, url) => {
+      need("allow_file_search", "Поиск файлов не разрешён на ПК");
+      return files.listAllowed(deps.config(), url.searchParams.get("root"), url.searchParams.get("path") || "");
+    },
+    "GET /api/tasks": async () => { need("allow_tasks", "Управление программами не разрешено на ПК"); return { tasks: await tasks.list() }; },
+    "POST /api/tasks/prepare": async (body, dev) => {
+      need("allow_tasks", "Управление программами не разрешено на ПК");
+      const target = await taskTarget(body.target);
+      const now = Date.now();
+      for (const [key, value] of killChallenges) if (value.expiresAt <= now) killChallenges.delete(key);
+      if (killChallenges.size >= 16) throw httpError(429, "Слишком много подтверждений");
+      const challenge = crypto.randomBytes(24).toString("hex"), expiresAt = now + 60000;
+      killChallenges.set(challenge, { owner: dev.id, target, expiresAt });
+      return { challenge, expiresAt, name: target.name, title: target.title };
+    },
+    "POST /api/tasks/action": async (body, dev) => {
+      need("allow_tasks", "Управление программами не разрешено на ПК");
+      const action = String(body.action);
+      if (!["activate", "close", "kill"].includes(action)) throw httpError(400, "Недопустимое действие");
+      let target;
+      if (action === "kill") {
+        const key = String(body.challenge || ""), confirmation = killChallenges.get(key);
+        if (!confirmation || confirmation.owner !== dev.id || confirmation.expiresAt <= Date.now()) throw httpError(403, "Подтверди завершение программы заново");
+        killChallenges.delete(key);
+        target = await taskTarget(confirmation.target);
+      } else target = await taskTarget(body.target);
+      const result = await tasks.action(target, action);
+      store.logAction(dev, "программа: " + action + " — " + target.name);
+      return result || { ok: true };
+    },
+    "GET /api/power/job": async () => { power.reconcile(); return power.state(); },
+    "POST /api/power/prepare": async (body, dev) => {
+      let target;
+      if (body.mode === "process") { need("allow_tasks", "Сначала разреши управление программами"); target = await taskTarget(body.target); }
+      return power.prepare(dev, { mode: body.mode, target });
+    },
+    "POST /api/power/commit": async (body, dev) => power.commit(dev, { challenge: body.challenge }),
+    "POST /api/power/cancel": async (_body, dev) => power.cancel(dev),
     "POST /api/unpair": async (_b, dev) => {
       store.logAction(dev, "отключился сам");
       store.revoke(dev.id);
@@ -266,7 +311,7 @@ export function createServer(deps) {
     },
   };
 
-  const options = { pfx: fs.readFileSync(store.PFX), passphrase: store.tlsPass(), minVersion: "TLSv1.2" };
+  const options = { pfx: fs.readFileSync(store.PFX), passphrase: store.tlsPass(), minVersion: "TLSv1.2", handshakeTimeout: 10000 };
   const server = https.createServer(options, async (req, res) => {
     const ip = ipOf(req);
     const url = new URL(req.url, "https://x");
@@ -309,6 +354,7 @@ export function createServer(deps) {
         deps.onChange();
         return send(res, 401, { error: "Срок ключа этого телефона истёк. Подключи его заново по QR-коду" });
       }
+      if (ip === "TUNA") server.lastTunaConnection = new Date().toISOString();
       if (!allow(key === "POST /api/input" ? "input:" + dev.id : dev.id)) return send(res, 429, { error: "Слишком часто" });
 
       if (key === "GET /api/screenshot") {
@@ -327,6 +373,30 @@ export function createServer(deps) {
         return st.pipe(res);
       }
 
+      if (key === "GET /api/library/search") {
+        need("allow_file_search", "Поиск файлов не разрешён на ПК");
+        searches.get(dev.id)?.abort();
+        const controller = new AbortController(); searches.set(dev.id, controller);
+        const abort = () => { if (!res.writableEnded) controller.abort(); };
+        res.once("close", abort);
+        try {
+          const result = await files.searchAllowed(deps.config(), { root: url.searchParams.get("root"), query: url.searchParams.get("q"), signal: controller.signal });
+          need("allow_file_search", "Доступ к файлам отозван");
+          if (!files.allowedRoots(deps.config()).some((r) => r.id === url.searchParams.get("root"))) throw httpError(403, "Доступ к папке отозван");
+          if (!store.devices().some((d) => d.id === dev.id)) throw httpError(401, "Телефон отключён");
+          return send(res, 200, result);
+        } finally { res.removeListener("close", abort); if (searches.get(dev.id) === controller) searches.delete(dev.id); }
+      }
+      if (key === "GET /api/library/download") {
+        need("allow_file_search", "Поиск файлов не разрешён на ПК");
+        const file = files.openAllowedDownload(deps.config(), url.searchParams.get("root"), url.searchParams.get("path"));
+        store.logAction(dev, "скачал из разрешённой папки: " + file.name);
+        res.writeHead(200, { "Content-Type": "application/octet-stream", "Content-Length": file.size, "Cache-Control": "no-store",
+          "Content-Disposition": "attachment; filename*=UTF-8''" + encodeURIComponent(file.name) });
+        file.stream.on("error", () => res.destroy());
+        res.once("close", () => file.stream.destroy());
+        return file.stream.pipe(res);
+      }
       if (key === "GET /api/files/download") {
         need("allow_files", "Обмен файлами выключен в настройках плагина");
         const f = files.openForDownload(deps.config(), url.searchParams.get("path"));
@@ -379,10 +449,36 @@ export function createServer(deps) {
     }
   });
 
-  // drop connections from outside the home network and Tailscale before TLS even starts
-  server.on("connection", (socket) => {
-    if (!isPrivate(socket.remoteAddress)) socket.destroy();
+  installLanPolicy(server);
+  const inputStream = attachInputStream(server, {
+    authenticate(req) {
+      const ip = ipOf(req);
+      if (blocked(ip)) throw httpError(429, "Слишком много неудачных попыток");
+      const token = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const dev = store.deviceByToken(token, ip);
+      if (!dev) { fail(ip); throw httpError(401, "Телефон не подключён или отключён на ПК"); }
+      if (store.expired(dev, deps.config().key_days)) throw httpError(401, "Срок ключа телефона истёк");
+      if (ip === "TUNA") server.lastTunaConnection = new Date().toISOString();
+      return dev;
+    },
+    enabled: () => !!deps.config().allow_input,
+    input: (events) => pc.input(events),
+    log(dev) {
+      if (Date.now() - (inputLogged.get(dev.id) || 0) > 600000) store.logAction(dev, "тачпад и клавиатура");
+      inputLogged.set(dev.id, Date.now());
+    }
   });
+  server.stopInputStream = inputStream.stop;
+  server.reconcileRemote = () => {
+    power.reconcile();
+    if (!deps.config().allow_tasks) killChallenges.clear();
+    if (!deps.config().allow_file_search) for (const controller of searches.values()) controller.abort();
+  };
+  server.stopRemote = () => {
+    power.stop(); killChallenges.clear();
+    for (const controller of searches.values()) controller.abort(); searches.clear();
+  };
+  server.once("close", server.stopRemote);
   server.requestTimeout = 0; // a chat reply may stream for minutes
   // the app keeps its connection between requests: through the relay a new one costs a tunnel and a TLS handshake
   server.keepAliveTimeout = 60000;

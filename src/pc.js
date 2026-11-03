@@ -11,6 +11,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
 import { DATA_DIR } from "./store.js";
+import { taskIdentity } from "./tasks.js";
 
 const HELPER = String.raw`
 using System;
@@ -21,6 +22,8 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices.ComTypes;
 using System.Globalization;
 using System.Threading;
+using System.ComponentModel;
+using System.Security.Principal;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Drawing.Drawing2D;
@@ -138,14 +141,20 @@ public static class AR {
   // ring around it — drawn even while Windows hides the pointer, so it can always be found.
   // Answers JSON: the JPEG, which monitor, the part shown as fractions of it, the pointer in the image.
   public static string Live(int index, int maxW, long quality, int zoom) {
+    return Live(index, maxW, quality, (double)zoom, double.NaN, double.NaN);
+  }
+  public static string Live(int index, int maxW, long quality, double zoom, double centerX, double centerY) {
     var ci = new CURSORINFO(); ci.cbSize = Marshal.SizeOf(typeof(CURSORINFO));
     GetCursorInfo(ref ci);
     var s = index < 0 ? Screen.FromPoint(new Point(ci.pt.x, ci.pt.y)) : ByIndex(index);
     var b = s.Bounds;
     zoom = Math.Max(1, Math.Min(4, zoom));
-    int cw = b.Width / zoom, ch = b.Height / zoom;
-    int cx = zoom == 1 ? b.Left : Math.Max(b.Left, Math.Min(b.Right - cw, ci.pt.x - cw / 2));
-    int cy = zoom == 1 ? b.Top : Math.Max(b.Top, Math.Min(b.Bottom - ch, ci.pt.y - ch / 2));
+    int cw = Math.Max(1, (int)Math.Round(b.Width / zoom)), ch = Math.Max(1, (int)Math.Round(b.Height / zoom));
+    // Explicit normalized centers keep the viewport stable as the cursor moves.
+    double anchorX = double.IsNaN(centerX) ? ci.pt.x : b.Left + Math.Max(0, Math.Min(1, centerX)) * b.Width;
+    double anchorY = double.IsNaN(centerY) ? ci.pt.y : b.Top + Math.Max(0, Math.Min(1, centerY)) * b.Height;
+    int cx = Math.Max(b.Left, Math.Min(b.Right - cw, (int)Math.Round(anchorX - cw / 2.0)));
+    int cy = Math.Max(b.Top, Math.Min(b.Bottom - ch, (int)Math.Round(anchorY - ch / 2.0)));
     double k = Math.Min(1.0, (double)maxW / cw);
     int px = ci.pt.x - cx, py = ci.pt.y - cy;
     string img;
@@ -228,13 +237,23 @@ public static class AR {
   // text as Unicode key strokes, so any language goes in without switching the layout
   public static void Text(string s) {
     var a = new List<INPUT>();
+    // Unicode typing is text, not a shortcut. Suspend our persistent modifiers only for this batch,
+    // then restore their physical state without changing the held-modifier ledger.
+    foreach (int m in heldModifiers) a.Add(K((ushort)m, 0, 2));
     foreach (char c in s) {
       if (c == '\n') { a.Add(K(0x0D, 0, 0)); a.Add(K(0x0D, 0, 2)); }
       else if (c != '\r') { a.Add(K(0, c, 4)); a.Add(K(0, c, 6)); }
     }
+    foreach (int m in heldModifiers) a.Add(K((ushort)m, 0, 0));
     Send(a);
   }
   static uint Ext(int vk) { return (vk >= 0x21 && vk <= 0x28) || vk == 0x2D || vk == 0x2E || vk == 0x5B ? 1u : 0u; }
+  static readonly HashSet<int> heldModifiers = new HashSet<int>();
+  public static void Modifier(int vk, bool down) {
+    if (vk != 16 && vk != 17 && vk != 18) throw new ArgumentException("Unsupported modifier");
+    if (down ? heldModifiers.Add(vk) : heldModifiers.Remove(vk))
+      Send(new List<INPUT> { K((ushort)vk, 0, down ? 0u : 2u) });
+  }
   // one key with modifiers: 1 Ctrl, 2 Shift, 4 Alt, 8 Win
   public static void Key(int vk, int mods) {
     var mk = new List<int>();
@@ -243,10 +262,134 @@ public static class AR {
     if ((mods & 4) != 0) mk.Add(0x12);
     if ((mods & 8) != 0) mk.Add(0x5B);
     var a = new List<INPUT>();
-    foreach (var m in mk) a.Add(K((ushort)m, 0, Ext(m)));
-    a.Add(K((ushort)vk, 0, Ext(vk))); a.Add(K((ushort)vk, 0, Ext(vk) | 2));
-    for (int i = mk.Count - 1; i >= 0; i--) a.Add(K((ushort)mk[i], 0, Ext(mk[i]) | 2));
+    foreach (var m in mk) if (!heldModifiers.Contains(m)) a.Add(K((ushort)m, 0, Ext(m)));
+    if (!heldModifiers.Contains(vk)) { a.Add(K((ushort)vk, 0, Ext(vk))); a.Add(K((ushort)vk, 0, Ext(vk) | 2)); }
+    for (int i = mk.Count - 1; i >= 0; i--) if (!heldModifiers.Contains(mk[i])) a.Add(K((ushort)mk[i], 0, Ext(mk[i]) | 2));
     Send(a);
+  }
+
+  // ── safe interactive tasks ──
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct PROCESSENTRY {
+    public uint size, usage, pid; public UIntPtr heap; public uint module, threads, parent;
+    public int priority; public uint flags;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string exe;
+  }
+  [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool Process32FirstW(IntPtr snapshot, ref PROCESSENTRY entry);
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool Process32NextW(IntPtr snapshot, ref PROCESSENTRY entry);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetProcessTimes(IntPtr h, out long created, out long exited, out long kernel, out long user);
+  [DllImport("kernel32.dll", SetLastError = true)] static extern bool IsProcessCritical(IntPtr h, out bool critical);
+  [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr h, uint access, out IntPtr token);
+  [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int kind, out int value, int size, out int needed);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr h, int command);
+
+  static HashSet<int> Protected(int hostPid) {
+    var parents = new Dictionary<int, int>();
+    var snapshot = CreateToolhelp32Snapshot(2, 0);
+    if (snapshot == (IntPtr)(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    try {
+      var entry = new PROCESSENTRY(); entry.size = (uint)Marshal.SizeOf(typeof(PROCESSENTRY));
+      if (!Process32FirstW(snapshot, ref entry)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      do { parents[(int)entry.pid] = (int)entry.parent; } while (Process32NextW(snapshot, ref entry));
+      int error = Marshal.GetLastWin32Error(); if (error != 18) throw new Win32Exception(error);
+    } finally { CloseHandle(snapshot); }
+    var result = new HashSet<int> { 0, 4 };
+    foreach (int root in new int[] { hostPid, Process.GetCurrentProcess().Id }) {
+      int id = root;
+      while (id > 0 && result.Add(id)) { int parent; if (!parents.TryGetValue(id, out parent)) break; id = parent; }
+    }
+    return result;
+  }
+  static string Created(Process p) {
+    long c, e, k, u;
+    // Keep the handle open throughout validation and action; PID reuse cannot change its target.
+    if (!GetProcessTimes(p.Handle, out c, out e, out k, out u)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    return c.ToString(CultureInfo.InvariantCulture);
+  }
+  static void TaskPolicy(Process p, HashSet<int> protectedPids) {
+    string name = p.ProcessName.ToLowerInvariant();
+    if (protectedPids.Contains(p.Id) || name.Contains("astra") || name.Contains("pluginhost")
+      || Array.IndexOf(new string[] { "system", "idle", "registry", "smss", "csrss", "wininit", "services", "lsass", "winlogon", "dwm", "fontdrvhost", "svchost", "sihost", "taskhostw", "explorer", "conhost" }, name) >= 0)
+      throw new InvalidOperationException("Protected process");
+    using (var self = Process.GetCurrentProcess()) {
+      if (p.SessionId != self.SessionId || p.SessionId == 0) throw new InvalidOperationException("Not in the interactive session");
+    }
+    bool critical;
+    if (!IsProcessCritical(p.Handle, out critical)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    if (critical) throw new InvalidOperationException("Critical process");
+    IntPtr token;
+    if (!OpenProcessToken(p.Handle, 8, out token)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    try {
+      using (var owner = new WindowsIdentity(token)) using (var self = WindowsIdentity.GetCurrent()) {
+        if (owner.User == null || !owner.User.Equals(self.User)) throw new InvalidOperationException("Different process owner");
+      }
+      int elevated, needed;
+      if (!GetTokenInformation(token, 20, out elevated, 4, out needed)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      if (elevated != 0) throw new InvalidOperationException("Elevated process");
+    } finally { CloseHandle(token); }
+    // Some Astra hosts have a generic process name. Check the executable and its product too.
+    var module = p.MainModule;
+    if (module == null) throw new InvalidOperationException("Unknown executable");
+    string product = module.FileVersionInfo.ProductName ?? "";
+    if (Path.GetFileName(module.FileName).ToLowerInvariant().Contains("astra") || product.ToLowerInvariant().Contains("astra"))
+      throw new InvalidOperationException("Protected Astra process");
+  }
+  static IntPtr TaskWindow(Process p, string expected) {
+    IntPtr window = p.MainWindowHandle; uint owner;
+    if (window == IntPtr.Zero || !IsWindowVisible(window) || GetWindowThreadProcessId(window, out owner) == 0 || owner != (uint)p.Id
+      || (expected != null && window.ToInt64().ToString(CultureInfo.InvariantCulture) != expected))
+      throw new InvalidOperationException("Application window changed or is unavailable");
+    return window;
+  }
+  public static string RunningTasks(int hostPid) {
+    var protectedPids = Protected(hostPid); var json = new StringBuilder("[");
+    foreach (var p in Process.GetProcesses()) using (p) {
+      try {
+        var window = TaskWindow(p, null);
+        TaskPolicy(p, protectedPids); string created = Created(p);
+        string title = p.MainWindowTitle;
+        if (string.IsNullOrWhiteSpace(title)) continue;
+        string name = p.MainModule.FileVersionInfo.FileDescription;
+        if (string.IsNullOrWhiteSpace(name)) name = p.ProcessName;
+        if (p.HasExited) continue;
+        long memory = p.WorkingSet64; string exe = p.MainModule.FileName;
+        if (json.Length > 1) json.Append(',');
+        json.Append("{\"pid\":").Append(p.Id).Append(",\"created\":").Append(Js(created))
+          .Append(",\"name\":").Append(Js(name)).Append(",\"title\":").Append(Js(title))
+          .Append(",\"window\":").Append(Js(window.ToInt64().ToString(CultureInfo.InvariantCulture)))
+          .Append(",\"memory\":").Append(memory).Append(",\"exe\":").Append(Js(exe)).Append('}');
+      } catch (InvalidOperationException) { } catch (ArgumentException) { } catch (Win32Exception) { } catch (NotSupportedException) { }
+    }
+    return json.Append(']').ToString();
+  }
+  public static string ProcessState(int pid, string created, int hostPid) {
+    Process p;
+    try { p = Process.GetProcessById(pid); } catch (ArgumentException) { return "exited"; }
+    using (p) {
+      if (p.HasExited || Created(p) != created) return "exited";
+      TaskPolicy(p, Protected(hostPid));
+      return p.HasExited ? "exited" : "running";
+    }
+  }
+  public static void TaskAction(int pid, string created, string window, string action, int hostPid) {
+    if (action != "activate" && action != "close" && action != "kill") throw new ArgumentException("Unknown task action");
+    using (var p = Process.GetProcessById(pid)) {
+      if (Created(p) != created || p.HasExited) throw new InvalidOperationException("Process identity changed");
+      TaskPolicy(p, Protected(hostPid));
+      var h = TaskWindow(p, window);
+      if (action == "kill") { p.Kill(); return; } // exact retained process handle, never a tree
+      if (action == "close") {
+        if (!PostMessage(h, 0x0010, IntPtr.Zero, IntPtr.Zero)) throw new InvalidOperationException("Windows refused to request close");
+        return; // WM_CLOSE only: no wait or escalation
+      }
+      if (IsIconic(h)) ShowWindowAsync(h, 9);
+      if (!SetForegroundWindow(h)) throw new InvalidOperationException("Windows refused foreground activation");
+    }
   }
 
   // ── each app's volume ──
@@ -685,6 +828,25 @@ export async function setAppVolume({ pid, volume: v, muted }) {
   return appVolumes();
 }
 
+// Server-only rows: callers must strip exe before returning these to a client.
+export async function runningTasks() {
+  return JSON.parse(await ps(`[AR]::RunningTasks(${process.pid})`));
+}
+
+export async function taskAction(identity, action) {
+  const { pid, created, window } = taskIdentity(identity);
+  if (!["activate", "close", "kill"].includes(action)) throw new Error("unknown task action");
+  await ps(`[AR]::TaskAction(${pid}, '${created}', '${window}', '${action}', ${process.pid})`);
+  return { ok: true, action };
+}
+
+export async function processState(identity) {
+  const { pid, created } = taskIdentity(identity, false);
+  const result = await ps(`[AR]::ProcessState(${pid}, '${created}', ${process.pid})`);
+  if (result !== "running" && result !== "exited") throw new Error("unknown process state");
+  return result;
+}
+
 // ── the touchpad and the keyboard ───────────────────────────────────────────
 // A batch of events from the phone, run in the pointer worker as one snippet. Every number is clamped
 // here and text travels as base64, so nothing the phone sends ever becomes PowerShell code.
@@ -699,6 +861,9 @@ export async function input(events) {
       case "m": lines.push(`[AR]::Move(${int(e[1], -4000, 4000, 0)}, ${int(e[2], -4000, 4000, 0)})`); break;
       case "b": lines.push(`[AR]::Button(${int(e[1], 0, 2, 0)}, ${int(e[2], 0, 2, 0)})`); break;
       case "w": lines.push(`[AR]::Wheel(${int(e[1], -2400, 2400, 0)}, ${int(e[2], -2400, 2400, 0)})`); break;
+      case "h":
+        if (![16, 17, 18].includes(e[1]) || ![0, 1].includes(e[2])) throw new Error("bad held modifier");
+        lines.push(`[AR]::Modifier(${e[1]}, $${e[2] ? "true" : "false"})`); break;
       case "k": lines.push(`[AR]::Key(${int(e[1], 1, 254, 13)}, ${int(e[2], 0, 15, 0)})`); break;
       case "p": lines.push(`[AR]::Point(${int(e[1], 0, 8, 0)}, ${int(e[2], 0, 10000, 5000)} / 10000.0, ${int(e[3], 0, 10000, 5000)} / 10000.0)`); break;
       case "t": {
@@ -713,8 +878,9 @@ export async function input(events) {
 }
 
 // One frame of the touchpad's live view (see Live in the helper), as an object.
-export async function liveFrame({ screen = -1, width = 960, zoom = 1, quality = 60 } = {}) {
-  return JSON.parse(await viewer.ps(`[AR]::Live(${int(screen, -1, 8, -1)}, ${int(width, 320, 1920, 960)}, ${int(quality, 30, 90, 60)}, ${int(zoom, 1, 4, 1)})`, 15000));
+export async function liveFrame({ screen = -1, width = 960, zoom = 1, quality = 60, centerX, centerY } = {}) {
+  const center = (v) => v == null ? "[double]::NaN" : finite(v, 0, 1, 0.5).toFixed(8);
+  return JSON.parse(await viewer.ps(`[AR]::Live(${int(screen, -1, 8, -1)}, ${int(width, 320, 1920, 960)}, ${int(quality, 30, 90, 60)}, [double]${finite(zoom, 1, 4, 1).toFixed(8)}, ${center(centerX)}, ${center(centerY)})`, 15000));
 }
 
 // ── Astra's voice for the phone ─────────────────────────────────────────────
@@ -762,7 +928,8 @@ export async function screens() {
   return ps("[AR]::Screens()");
 }
 
-const int = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Math.round(Number(v)) || d));
+const finite = (v, lo, hi, d) => { const n = Number(v); return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : d; };
+const int = (v, lo, hi, d) => Math.round(finite(v, lo, hi, d));
 
 export async function screenshot(index = 0, maxWidth = 1600) {
   const b64 = await ps(`[AR]::Shot(${int(index, 0, 8, 0)}, ${int(maxWidth, 320, 3840, 1600)}, 72)`, 20000);
@@ -772,6 +939,11 @@ export async function screenshot(index = 0, maxWidth = 1600) {
 function run(file, args) {
   return new Promise((resolve, reject) =>
     cp.execFile(file, args, { windowsHide: true, timeout: 15000 }, (err, _o, stderr) => (err ? reject(new Error((stderr || err.message).trim())) : resolve())));
+}
+
+// No force flag: applications retain their opportunity to save or block shutdown.
+export function powerNowShutdown() {
+  return run("shutdown.exe", ["/s", "/t", "0"]);
 }
 
 export async function power(what) {

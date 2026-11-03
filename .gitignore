@@ -9,3 +9,6 @@ android/*.apk.idsig
 android/release.keystore
 android/keystore.properties
 .wrangler/
+
+# local agent worktrees and settings
+.claude/

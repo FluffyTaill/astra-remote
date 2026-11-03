@@ -1,4 +1,4 @@
 {
   "listing.name": "Phone Remote",
-  "listing.description": "Control this PC and talk to Astra from an Android app: a remote with your Astra commands, music and volume, files and clipboard, screenshots, your avatar with voice, and sleep or lock. Works from anywhere through your own free Cloudflare relay."
+  "listing.description": "Control your PC and talk to Astra from Android: commands, music, volume, files, clipboard and screenshots. Home Wi-Fi or a free TUNA HTTP tunnel, with end-to-end PC certificate pinning and no router port forwarding."
 }

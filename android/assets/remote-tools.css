@@ -1,0 +1,33 @@
+/* Extensions of the existing Astra mobile theme; no new palette or navigation system. */
+.remote-panel{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg);z-index:22;overflow:hidden}
+.remote-head{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);flex:none}
+.remote-head h2{font:700 17px var(--mono);margin:0;flex:1;min-width:0}
+.remote-body{padding:14px;overflow:auto;flex:1;min-height:0}
+.remote-panel button,.remote-panel select{min-height:44px}
+.remote-panel select{background:var(--raised);color:var(--text);border:1px solid var(--line-strong);border-radius:var(--r-ctl);font:inherit;padding:8px;max-width:100%}
+.remote-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.remote-app{padding:14px 0;border-top:1px solid var(--line)}
+.remote-app:first-child{border-top:0}
+.remote-app strong,.remote-app .hint{overflow-wrap:anywhere}
+.remote-app .hint{margin-top:4px}
+.remote-panel .field{min-width:0}
+.remote-search{display:flex;gap:8px;margin:12px 0}
+.remote-search input{flex:1}
+.remote-note{padding:12px;border:1px solid var(--line-strong);border-radius:var(--r-ctl);color:var(--muted);margin:10px 0;overflow-wrap:anywhere}
+.remote-stage{flex:1;min-height:0;position:relative;overflow:hidden;touch-action:none;background:#000}
+.remote-stage img{position:absolute;width:100%;height:100%;object-fit:contain;user-select:none;-webkit-user-drag:none;pointer-events:none}
+.remote-stage .remote-wait{position:absolute;inset:0;display:grid;place-items:center;color:var(--muted);pointer-events:none;padding:12px}
+.remote-controls{display:flex;align-items:center;gap:6px;padding:6px 10px;overflow-x:auto;flex:none;background:var(--card);border-top:1px solid var(--line)}
+.remote-controls button{flex:none;white-space:nowrap;min-width:44px}
+.remote-controls input{min-width:120px;flex:1;background:var(--raised);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:10px}
+.remote-screen .remote-head{padding:4px 10px}
+.remote-screen .remote-head h2{font-size:13px}
+.remote-screen .hint{font-size:11px}
+.remote-panel button:focus-visible,.remote-panel select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media(max-height:430px){.remote-controls{padding:3px 8px}.remote-screen .remote-head{gap:6px}.remote-screen .remote-head h2{display:none}.remote-screen .remote-controls button{padding:7px 10px}}
+.remote-embedded{position:relative;inset:auto;z-index:auto;height:100%;min-height:0}
+main:has(>.remote-embedded){padding:0;overflow:hidden;min-height:0}
+.remote-help{flex:none;margin:0;padding:6px 10px}
+#remoteKeys{flex-wrap:wrap;max-height:32%;overflow:auto}
+#remoteType{flex-basis:100%;min-width:0}
+@media(prefers-reduced-motion:reduce){.remote-panel *{scroll-behavior:auto;transition:none!important}}

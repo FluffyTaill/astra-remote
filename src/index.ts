@@ -15,7 +15,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { plugin, tool, s } from "astra-plugin-sdk";
 import { createServer, addresses, certFingerprint } from "./server.js";
-import { startRelay } from "./relay.js";
+import { startTuna, tunaUrl, TUNA_PORT } from "./tuna.js";
 import * as pc from "./pc.js";
 import * as store from "./store.js";
 import * as files from "./files.js";
@@ -24,7 +24,8 @@ import { qrSvg } from "./qr.js";
 const DEFAULTS = {
   port: 8765, allow_chat: true, allow_screenshot: true, allow_power: true, allow_shutdown: false, confirm_shutdown: true,
   allow_files: true, shared_folder: "", max_upload_mb: 2048, allow_clipboard: true, allow_open_url: true, allow_input: true, allow_launch: true, voice_to_phone: true, voice_quiet_pc: true, key_days: 90,
-  keep_awake: false, relay_url: ""
+  keep_awake: false,
+  allow_file_search: false, allowed_folders: "", allow_tasks: false, allow_remote_shutdown: false
 };
 
 // "Don't sleep" holds only while at least one phone is paired: no phone, no reason to keep the PC up.
@@ -45,38 +46,29 @@ function config() {
   for (const k of Object.keys(DEFAULTS)) if (c[k] !== undefined && c[k] !== null) out[k] = c[k];
   out.port = Math.max(1024, Math.min(65535, Number(out.port) || DEFAULTS.port));
   out.key_days = Math.max(0, Math.round(Number(out.key_days)) || 0);
-  // the address saved on the plugin page wins; the settings field is the other way to give it
-  out.relay_url = relayUrl(store.relayUrlSaved()) || relayUrl(out.relay_url);
   return out;
 }
 
-// "https://x.workers.dev" or "wss://…" → "wss://x.workers.dev"; anything else → "" (relay off)
-function relayUrl(v) {
-  const t = String(v || "").trim().replace(/\/+$/, "");
-  if (!t) return "";
-  try {
-    const u = new URL(/^[a-z]+:\/\//i.test(t) ? t : "https://" + t);
-    if (!/^(https|wss):$/.test(u.protocol) || u.pathname !== "/" && u.pathname !== "") return "";
-    return "wss://" + u.host;
-  } catch {
-    return "";
-  }
+let tuna = null, tunaFor = "";
+function tunaSettings() {
+  const saved = store.tunaSaved();
+  let url = "";
+  try { url = tunaUrl(saved.url); } catch {}
+  const port = Number(saved.port) || TUNA_PORT;
+  return { enabled: saved.enabled === true && !!url, url, port: Number.isInteger(port) && port >= 1024 && port <= 65535 ? port : TUNA_PORT };
 }
-
-// ── the relay: the way in from outside the home ─────────────────────────────
-let relay = null, relayFor = "";
-function applyRelay() {
-  const url = config().relay_url;
-  if (relay && relayFor === url) return;
-  relay?.stop();
-  relay = null;
-  relayFor = url;
-  if (!url) return;
-  const { id, key } = store.relayIdentity();
-  relay = startRelay({ url, id, key, port: () => listening.port, log: (m) => ctxRef?.info(m).catch(() => {}) });
+function applyTuna() {
+  const settings = tunaSettings();
+  const identity = settings.enabled ? JSON.stringify([settings.url, settings.port, listening.port]) : "";
+  if (tuna && identity === tunaFor) return;
+  tuna?.stop(); tuna = null; tunaFor = identity;
+  if (!settings.enabled || !listening.port) return;
+  tuna = startTuna({ port: settings.port, backendPort: () => listening.port, key: store.tunaKey() });
 }
-// what the phone needs to come through it: the relay and this PC's id on it (no secret: the TLS pin is the check)
-const relayInfo = () => (relay ? { url: relayFor, id: store.relayIdentity().id } : null);
+const tunaInfo = () => {
+  const settings = tunaSettings();
+  return tuna?.state().status === "listening" && settings.enabled ? { v: 1, url: settings.url, key: store.tunaKey() } : null;
+};
 
 // Astra grants a plugin's permissions only when the user ticks them in the install dialog; an
 // install where they were left unticked runs with none, and Astra refuses the call (code 7).
@@ -210,7 +202,7 @@ function loudAfterCrash() {
 async function startServer() {
   const { port } = config();
   if (server && listening.port === port) return;
-  stopServer();
+  await stopServer();
   try {
     await pc.ensureCertificate(store.PFX, store.tlsPass());
     fingerprint = certFingerprint();
@@ -224,24 +216,40 @@ async function startServer() {
       throw e.code === 7 ? new Error(NO_GRANT("запускать команды кнопками")) : e;
     }),
     chat: (text, fresh, aloud) => (aloud && config().voice_to_phone ? chatAloud(text, fresh) : chat(text, fresh)),
-    relay: relayInfo,
+    tuna: tunaInfo,
     onChange: () => {}
   });
   server = s;
+  let ipv4Fallback = false;
   s.on("error", (e) => {
+    if (!ipv4Fallback && ["EAFNOSUPPORT", "EPROTONOSUPPORT", "EADDRNOTAVAIL", "EINVAL"].includes(e.code)) {
+      ipv4Fallback = true;
+      s.listen(port, "0.0.0.0");
+      return;
+    }
     listening = { port: 0, error: e.code === "EADDRINUSE" ? `Порт ${port} уже занят — поменяй его в настройках плагина` : e.message };
     ctxRef?.warn(`server: ${e.message}`).catch(() => {});
   });
-  s.listen(port, "0.0.0.0", () => {
-    listening = { port, error: "" };
+  s.on("listening", () => {
+    listening = { port, error: "", ipv6: !ipv4Fallback };
     ctxRef?.info(`listening on ${port}`).catch(() => {});
+    applyTuna();
   });
+  s.listen({ port, host: "::", ipv6Only: false });
 }
 
-function stopServer() {
-  if (server) server.close();
+async function stopServer() {
+  tuna?.stop(); tuna = null; tunaFor = "";
+  const old = server;
   server = null;
   listening = { port: 0, error: "" };
+  if (old) {
+    // Finish the active batch and release held mouse buttons before killing workers.
+    old.stopRemote?.();
+    await old.stopInputStream?.();
+    old.closeAccessSockets?.();
+    await new Promise<void>((resolve) => old.close(() => resolve()));
+  }
 }
 
 function sharedFolder() {
@@ -257,8 +265,7 @@ function pageState(ctx) {
   return {
     // not "error": the SDK takes an object with an "error" key for a { resultJson, error } wrapper and drops the rest
     port: listening.port, serverError: listening.error, addresses: addresses(), config: config(), fingerprint,
-    relay: relay ? { url: relayFor, ...relay.state() } : null,
-    relayId: store.relayIdentity().id, // for a private relay's ALLOWED_PCS (relay/README.md)
+    tuna: { ...tunaSettings(), ...(tuna?.state() || { status: "off", error: "" }), lastConnection: server?.lastTunaConnection || "" },
     pairing: store.pairState(), actions: store.recentActions(), folder: sharedFolder(),
     devices: store.devices().map((d) => ({ ...d, expires: store.expiresAt(d, config().key_days) })),
     buttons: store.buttons().map((b) => ({ ...b, bound: active.some((a) => a === `button_${b.n}` || a.endsWith(`__button_${b.n}`)) }))
@@ -271,8 +278,8 @@ function pairLink(secret) {
   const q = new URLSearchParams({
     v: "1", h: addresses().map((a) => a.address).join(","), p: String(listening.port), f: fingerprint, s: secret, n: os.hostname()
   });
-  // The relay is not in it: its address would make the code too dense for a phone camera, and the
-  // phone learns it from /api/state right after pairing, over the pinned connection.
+  const tunnel = tunaInfo();
+  if (tunnel) q.set("t", JSON.stringify(tunnel));
   return "astraremote://pair?" + q.toString();
 }
 
@@ -329,18 +336,22 @@ export const app = plugin({
     applyKeepAwake();
     awakeTimer = setInterval(applyKeepAwake, 4 * 60 * 1000);
     await startServer();
-    applyRelay();
+    applyTuna();
   },
   onConfigChanged: async (_cfg, ctx) => {
     ctxRef = ctx;
+    server?.reconcileRemote?.();
     await startServer();
-    applyRelay();
+    applyTuna();
     applyKeepAwake();
   },
   onShutdown: async () => {
+    // A wedged native worker must not make Astra wait indefinitely for a reinstall.
+    const deadline = setTimeout(() => process.exit(0), 5000);
+    deadline.unref();
     // each step on its own: one that throws must not keep the process (and Astra's reinstall) waiting
-    for (const step of [() => clearInterval(awakeTimer), () => relay?.stop(), stopServer, pc.stopWorker]) {
-      try { step(); } catch {}
+    for (const step of [() => clearInterval(awakeTimer), () => tuna?.stop(), stopServer, pc.stopWorker]) {
+      try { await step(); } catch {}
     }
     // and out, even if something still holds the event loop: Astra refuses a reinstall while we run
     setTimeout(() => process.exit(0), 1500).unref();
@@ -383,20 +394,17 @@ export const app = plugin({
         store.setButton(p.n, p.patch || {});
         return pageState(ctx);
       },
-      // the relay address from the plugin page: "" turns it off
-      setRelay: async (p, ctx) => {
-        const raw = String(p.url || "").trim();
-        if (raw && !relayUrl(raw)) throw new Error("Это не похоже на адрес ретранслятора: нужен https://…workers.dev");
-        store.saveRelayUrl(raw);
-        applyRelay();
+      setTuna: async (p, ctx) => {
+        const url = tunaUrl(p.url);
+        const enabled = p.enabled === true;
+        const port = Number(p.port) || TUNA_PORT;
+        if (!Number.isInteger(port) || port < 1024 || port > 65535 || port === config().port) throw new Error("Нужен отдельный локальный порт от 1024 до 65535");
+        if (enabled && !url) throw new Error("Вставь публичную HTTPS-ссылку из TUNA Desktop");
+        store.saveTuna({ enabled, url, port });
+        applyTuna();
+        if (server) server.lastTunaConnection = "";
+        store.cancelPairing();
         return pageState(ctx);
-      },
-      // a link from the plugin page (the Deploy to Cloudflare button), in the default browser
-      openUrl: async (p) => {
-        const url = String(p.url || "");
-        if (!/^https:\/\/(deploy\.workers\.cloudflare\.com|github\.com|dash\.cloudflare\.com)\//.test(url)) throw new Error("Эту ссылку плагин не открывает");
-        await pc.openUrl(url);
-        return true;
       },
       openFolder: async () => {
         const f = sharedFolder();

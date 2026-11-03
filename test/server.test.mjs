@@ -175,4 +175,51 @@ test("state tells the app where the PC is now", async (t) => {
   const st = (await call("GET", "/api/state", null, token)).json;
   assert.ok(Array.isArray(st.endpoints));
   for (const a of st.endpoints) assert.match(a, /^\d+\.\d+\.\d+\.\d+$/);
+  assert.equal(st.tuna, null);
+  assert.equal(st.relay, undefined);
+  assert.equal(st.connectionUrls, undefined);
+});
+
+test("paired state publishes only the enabled TUNA transport", async (t) => {
+  const { p, port, secret, fp } = await start({ AR_TUNA: "1" });
+  t.after(() => p.kill());
+  const call = client(port, fp);
+  assert.equal((await call("GET", "/api/state")).status, 401);
+  const token = (await pairAs(call, secret, "Tunnel")).json.token;
+  const st = (await call("GET", "/api/state", null, token)).json;
+  assert.deepEqual(st.tuna, { v: 1, url: "https://test.ru.tuna.am", key: "a".repeat(64) });
+  assert.equal(st.relay, undefined);
+});
+
+test("remote features keep permissions and confirm precise dangerous targets", async (t) => {
+  const allowed = fs.mkdtempSync(path.join(os.tmpdir(), "ar-allowed-api-"));
+  fs.writeFileSync(path.join(allowed, "forgotten.txt"), "allowed test content");
+  const { p, port, secret, fp } = await start({ AR_REMOTE_FEATURES: "1", AR_SHUTDOWN: "1", AR_ALLOWED: allowed });
+  t.after(() => { p.kill(); fs.rmSync(allowed, { recursive: true, force: true }); });
+  const call = client(port, fp), paired = await pairAs(call, secret, "Remote features");
+  const token = paired.json.token;
+  assert.equal((await call("GET", "/api/tasks")).status, 401);
+  const state = (await call("GET", "/api/state", null, token)).json;
+  assert.equal(state.allow.file_search, true); assert.equal(state.allow.tasks, true); assert.equal(state.allow.remote_shutdown, true);
+  const roots = (await call("GET", "/api/library/roots", null, token)).json.roots;
+  assert.equal(roots.length, 1); assert.equal(JSON.stringify(roots).includes(allowed), false);
+  const query = "root=" + roots[0].id;
+  assert.equal((await call("GET", "/api/library/list?" + query, null, token)).json.items[0].name, "forgotten.txt");
+  assert.equal((await call("GET", "/api/library/search?" + query + "&q=forgot", null, token)).json.items[0].name, "forgotten.txt");
+  assert.equal((await call("GET", "/api/library/download?" + query + "&path=forgotten.txt", null, token)).text, "allowed test content");
+  assert.notEqual((await call("GET", "/api/library/download?" + query + "&path=..%2Foutside", null, token)).status, 200);
+  const task = (await call("GET", "/api/tasks", null, token)).json.tasks[0];
+  assert.equal(task.exe, undefined);
+  assert.equal((await call("POST", "/api/tasks/action", { action: "kill", target: task }, token)).status, 403);
+  const confirmation = (await call("POST", "/api/tasks/prepare", { target: task }, token)).json;
+  assert.equal((await call("POST", "/api/tasks/action", { action: "kill", challenge: confirmation.challenge }, token)).status, 200);
+  assert.equal((await call("POST", "/api/tasks/action", { action: "kill", challenge: confirmation.challenge }, token)).status, 403);
+  const prepared = (await call("POST", "/api/power/prepare", { mode: "process", target: task }, token)).json;
+  assert.ok(prepared.challenge);
+  const armed = await call("POST", "/api/power/commit", { challenge: prepared.challenge }, token);
+  assert.equal(armed.status, 200); assert.equal(armed.json.status, "waiting");
+  assert.equal((await call("POST", "/api/power/cancel", {}, token)).json.status, "cancelled");
+  const now = (await call("POST", "/api/power/prepare", { mode: "now" }, token)).json;
+  assert.equal((await call("POST", "/api/power/commit", { challenge: now.challenge }, token)).json.status, "countdown");
+  assert.equal((await call("POST", "/api/power/cancel", {}, token)).json.status, "cancelled");
 });

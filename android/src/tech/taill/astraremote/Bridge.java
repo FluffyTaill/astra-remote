@@ -52,7 +52,6 @@ import javax.net.ssl.HttpsURLConnection;
  */
 final class Bridge {
     private static final Pattern IPV4 = Pattern.compile("^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$");
-    private static final String TAILSCALE = "com.tailscale.ipn";
     private static final Pattern HEX64 = Pattern.compile("^[0-9a-f]{64}$");
 
     private final MainActivity activity;
@@ -64,7 +63,11 @@ final class Bridge {
     private final ExecutorService transfers = Executors.newSingleThreadExecutor();
     private volatile Vault.Pairing pairing;
     private volatile Pinned net;
-    private volatile Relay relay; // the way in from anywhere, if the PC has a relay
+    private volatile TunaTunnel tuna; // the way in from anywhere, if the PC has a tuna
+    private volatile InputChannel inputChannel;
+    private volatile String inputId = "";
+    private volatile boolean shuttingDown;
+    private volatile boolean inputPaused;
     private volatile PairAttempt attempt;
     private volatile HttpsURLConnection chatConn;
     private volatile boolean chatStopped;
@@ -85,26 +88,29 @@ final class Bridge {
     }
 
     private void setPairing(Vault.Pairing p) {
+        stopInputChannel();
         pairing = p;
-        relay = relayFor(p);
-        net = p == null ? null : new Pinned(p.hosts, p.port, p.fingerprint, p.lastHost, relay);
+        tuna = tunaFor(p);
+        net = p == null ? null : new Pinned(p.hosts, p.port, p.fingerprint, p.lastHost, tuna);
     }
 
-    /** The relay this pairing names, reusing the running one when it is the same. */
-    private Relay relayFor(Vault.Pairing p) {
-        Relay old = relay;
-        if (p != null && Relay.valid(p.relayUrl, p.relayId)) {
-            if (old != null && old.same(p.relayUrl, p.relayId)) return old;
+    /** The tuna this pairing names, reusing the running one when it is the same. */
+    private TunaTunnel tunaFor(Vault.Pairing p) {
+        TunaTunnel old = tuna;
+        if (p != null && TunaTunnel.valid(p.tunaUrl, p.tunaKey)) {
+            if (old != null && old.same(p.tunaUrl, p.tunaKey)) return old;
             if (old != null) old.close();
-            return new Relay(p.relayUrl, p.relayId);
+            return new TunaTunnel(p.tunaUrl, p.tunaKey);
         }
         if (old != null) old.close();
         return null;
     }
 
     void shutdown() {
+        shuttingDown = true;
+        stopInputChannel();
         if (tts != null) tts.shutdown();
-        Relay r = relay;
+        TunaTunnel r = tuna;
         if (r != null) r.close();
         PairAttempt a = attempt;
         if (a != null) a.cancelled = true;
@@ -137,63 +143,30 @@ final class Bridge {
         }
     }
 
-    static boolean isTailscale(String ip) {
-        java.util.regex.Matcher m = IPV4.matcher(ip);
-        if (!m.matches()) return false;
-        int a = Integer.parseInt(m.group(1)), b = Integer.parseInt(m.group(2));
-        return a == 100 && b >= 64 && b < 128;
-    }
-
     private static List<String> validHosts(Iterable<String> list) {
-        List<String> out = new ArrayList<>();
-        for (String h : list) {
-            String t = h == null ? "" : h.trim();
-            java.util.regex.Matcher m = IPV4.matcher(t);
-            if (!m.matches() || out.contains(t)) continue;
-            boolean ok = true;
-            for (int i = 1; i <= 4; i++) ok &= Integer.parseInt(m.group(i)) <= 255;
-            if (ok) out.add(t);
-        }
-        return out;
+        return Endpoint.valid(list);
     }
 
-    /**
-     * The PC says where it can be reached now (a new home IP, Tailscale installed after pairing): keep the
-     * phone's list in step. Safe to take from the PC — it came over the pinned connection, and any address
-     * still has to show the paired certificate before it gets the key.
-     */
-    private void updateHosts(String stateJson) {
+    /** Routes come only from the authenticated PC over the pinned connection. */
+    private synchronized void updateHosts(String stateJson) {
         Vault.Pairing p = pairing;
         if (p == null) return;
         try {
             JSONObject st = new JSONObject(stateJson);
-            // the relay: set up, changed or turned off on the PC since pairing
-            JSONObject r = st.optJSONObject("relay");
-            String ru = r == null ? "" : r.optString("url"), ri = r == null ? "" : r.optString("id");
-            if (!Relay.valid(ru, ri)) ru = ri = "";
-            if (!ru.equals(p.relayUrl) || !ri.equals(p.relayId)) {
-                p.relayUrl = ru;
-                p.relayId = ri;
-                if (ru.isEmpty() && Relay.HOST.equals(p.lastHost)) p.lastHost = p.hosts[0];
-                vault.save(p);
-                setPairing(p);
-            }
+            JSONObject r = st.optJSONObject("tuna");
+            String url = r == null ? "" : r.optString("url"), key = r == null ? "" : r.optString("key");
+            if (r == null || r.optInt("v") != 1 || !TunaTunnel.valid(url, key)) url = key = "";
             org.json.JSONArray arr = st.optJSONArray("endpoints");
-            if (arr == null || arr.length() == 0) return;
+            if (arr == null) return;
             List<String> fresh = new ArrayList<>();
-            for (int i = 0; i < arr.length(); i++) fresh.add(arr.optString(i));
+            for (int i = 0; i < Math.min(arr.length(), 16); i++) fresh.add(arr.optString(i));
             fresh = validHosts(fresh);
-            if (fresh.isEmpty()) return;
-            List<String> old = java.util.Arrays.asList(p.hosts);
-            if (fresh.size() == old.size() && fresh.containsAll(old)) return;
-            Pinned n = net;
-            String current = n == null ? p.lastHost : n.currentHost();
-            p.hosts = fresh.toArray(new String[0]);
-            p.lastHost = fresh.contains(current) || (Relay.HOST.equals(current) && relay != null) ? current : fresh.get(0);
-            vault.save(p);
-            net = new Pinned(p.hosts, p.port, p.fingerprint, p.lastHost, relay);
-        } catch (Exception ignored) {
-        }
+            if (fresh.equals(java.util.Arrays.asList(p.hosts)) && url.equals(p.tunaUrl) && key.equals(p.tunaKey)) return;
+            String current = net == null ? p.lastHost : net.currentHost();
+            p.hosts = fresh.toArray(new String[0]); p.tunaUrl = url; p.tunaKey = key;
+            p.lastHost = fresh.contains(current) || TunaTunnel.HOST.equals(current) && !url.isEmpty() ? current : "";
+            vault.save(p); setPairing(p);
+        } catch (Exception ignored) {}
     }
 
     /** What the app does with each fresh /api/state besides the page: the widget's labels, Astra's notes. */
@@ -261,11 +234,11 @@ final class Bridge {
 
     static String message(Exception e) {
         if (e instanceof ConnectException || e instanceof SocketTimeoutException || e instanceof NoRouteToHostException) {
-            return "ПК не отвечает. Проверь, что он включён и Astra на нём запущена. Вне дома нужен ретранслятор (настройки плагина) или Tailscale";
+            return "ПК недоступен. Проверь питание и запуск Astra. Вне дома также должен работать HTTP-туннель TUNA Desktop и адаптер TUNA в плагине. Дома приложение работает без TUNA";
         }
         String m = e.getMessage();
         if (m != null && m.contains(Pinned.MISMATCH)) return Pinned.MISMATCH;
-        if (m != null && m.contains(Relay.OFFLINE)) return Relay.OFFLINE;
+        if (m != null && m.contains(TunaTunnel.OFFLINE)) return TunaTunnel.OFFLINE;
         return m == null || m.isEmpty() ? e.getClass().getSimpleName() : m;
     }
 
@@ -312,15 +285,24 @@ final class Bridge {
             o.put("device", deviceName());
             o.put("lock", activity.lockEnabled());
             o.put("lockAvailable", activity.lockAvailable());
-            boolean ts = false;
-            if (p != null) for (String h : p.hosts) ts |= isTailscale(h);
-            o.put("tailscale", ts);
-            o.put("tailscaleApp", tailscaleInstalled());
-            o.put("relay", p != null && Relay.valid(p.relayUrl, p.relayId));
+            o.put("via", net != null && TunaTunnel.HOST.equals(net.currentHost()) ? "TUNA" : "Домашняя сеть");
+            o.put("tuna", p != null && TunaTunnel.valid(p.tunaUrl, p.tunaKey));
             return o.toString();
         } catch (Exception e) {
             return "{}";
         }
+    }
+
+    @JavascriptInterface
+    public String setTunaAddress(String address) {
+        try {
+            Vault.Pairing p = pairing;
+            String url = Endpoint.tuna(address);
+            if (p == null || !TunaTunnel.valid(url, p.tunaKey)) throw new IllegalArgumentException("Нужна HTTPS-ссылка TUNA и ранее полученные с ПК настройки туннеля. Открой приложение дома или подключись по новому QR-коду");
+            p.tunaUrl = url; p.lastHost = TunaTunnel.HOST;
+            vault.save(p); setPairing(p);
+            return "{}";
+        } catch (Exception e) { return errorJson(e); }
     }
 
     @JavascriptInterface
@@ -340,6 +322,53 @@ final class Bridge {
     @JavascriptInterface
     public void setLock(boolean on) {
         ui.post(() -> activity.setLockEnabled(on));
+    }
+
+    // ── persistent touchpad channel ──────────────────────────────────────────
+    private synchronized void stopInputChannel() {
+        inputId = "";
+        InputChannel channel = inputChannel; inputChannel = null;
+        if (channel != null) channel.close();
+    }
+
+    void pauseInput() {
+        inputPaused = true;
+        stopInputChannel();
+        js("window.__padPause&&window.__padPause()");
+    }
+
+    void resumeInput() {
+        inputPaused = false;
+        if (!shuttingDown) js("window.__padResume&&window.__padResume()");
+    }
+
+    @JavascriptInterface
+    public synchronized void inputStart(final String id) {
+        if (shuttingDown || inputPaused || id == null || id.length() > 80) return;
+        stopInputChannel();
+        final Pinned n = net; final Vault.Pairing p = pairing;
+        if (n == null || p == null) return;
+        inputId = id;
+        inputChannel = new InputChannel(n, p.token, new InputChannel.Listener() {
+            @Override public void message(String json) {
+                if (id.equals(inputId)) js("window.__inputChannel&&window.__inputChannel(" + q(id) + "," + q(json) + ")");
+            }
+            @Override public void ended(String error) {
+                if (id.equals(inputId)) js("window.__inputChannel&&window.__inputChannel(" + q(id) + "," + q("{\"error\":" + q(error) + "}") + ")");
+            }
+        });
+        inputChannel.start();
+    }
+
+    @JavascriptInterface
+    public boolean inputSend(String id, String json) {
+        InputChannel channel = inputChannel;
+        return id != null && id.equals(inputId) && channel != null && channel.send(json);
+    }
+
+    @JavascriptInterface
+    public synchronized void inputStop(String id) {
+        if (id != null && id.equals(inputId)) stopInputChannel();
     }
 
     // ── requests ────────────────────────────────────────────────────────────
@@ -511,7 +540,8 @@ final class Bridge {
 
     /** What the QR code on the plugin page carries (see pairLink in the plugin's src/index.ts). */
     static Draft parseQr(String text) {
-        Uri u = Uri.parse(text == null ? "" : text.trim());
+        if (text == null || text.length() > 4096) throw new IllegalArgumentException("QR-код повреждён");
+        Uri u = Uri.parse(text.trim());
         if (!"astraremote".equals(u.getScheme()) || !"pair".equals(u.getHost())) {
             throw new IllegalArgumentException("Это не QR-код Phone Remote");
         }
@@ -527,7 +557,7 @@ final class Bridge {
         }
         String fp = String.valueOf(u.getQueryParameter("f")).toLowerCase();
         String secret = u.getQueryParameter("s");
-        if (hosts.isEmpty() || port < 1 || port > 65535 || !HEX64.matcher(fp).matches() || secret == null || secret.isEmpty() || secret.length() > 200) {
+        if (port < 1 || port > 65535 || !HEX64.matcher(fp).matches() || secret == null || secret.isEmpty() || secret.length() > 200) {
             throw new IllegalArgumentException("QR-код повреждён. Открой его на ПК заново");
         }
         Draft d = new Draft();
@@ -535,11 +565,16 @@ final class Bridge {
         d.pairing.hosts = hosts.toArray(new String[0]);
         d.pairing.port = port;
         d.pairing.fingerprint = fp;
-        String ru = u.getQueryParameter("r"), ri = u.getQueryParameter("i");
-        if (Relay.valid(ru, ri)) {
-            d.pairing.relayUrl = ru;
-            d.pairing.relayId = ri;
+        String tunnelJson = u.getQueryParameter("t");
+        if (tunnelJson != null) {
+            try {
+                JSONObject t = new JSONObject(tunnelJson);
+                String url = t.getString("url"), key = t.getString("key");
+                if (t.optInt("v") != 1 || !TunaTunnel.valid(url, key)) throw new IllegalArgumentException();
+                d.pairing.tunaUrl = Endpoint.tuna(url); d.pairing.tunaKey = key;
+            } catch (Exception e) { throw new IllegalArgumentException("Некорректные настройки TUNA в QR-коде"); }
         }
+        if (hosts.isEmpty() && d.pairing.tunaUrl.isEmpty()) throw new IllegalArgumentException("Нет домашнего адреса или TUNA. Открой новый QR-код на ПК");
         String name = u.getQueryParameter("n");
         d.pairing.pcName = name == null || name.trim().isEmpty() ? "ПК" : name.trim().substring(0, Math.min(64, name.trim().length()));
         d.secret = secret;
@@ -585,8 +620,8 @@ final class Bridge {
         final String name = pairName.isEmpty() ? deviceName() : pairName;
         pairEvent("connecting", d.pairing.pcName, null);
         pool.execute(() -> {
-            // pairing works away from home too, when the PC has a relay; this one is only for the pairing
-            final Relay pr = Relay.valid(d.pairing.relayUrl, d.pairing.relayId) ? new Relay(d.pairing.relayUrl, d.pairing.relayId) : null;
+            // pairing works away from home too, when the PC has a tuna; this one is only for the pairing
+            final TunaTunnel pr = TunaTunnel.valid(d.pairing.tunaUrl, d.pairing.tunaKey) ? new TunaTunnel(d.pairing.tunaUrl, d.pairing.tunaKey) : null;
             try {
                 Pinned n = new Pinned(d.pairing.hosts, d.pairing.port, d.pairing.fingerprint, "", pr);
                 JSONObject req = new JSONObject();
@@ -643,35 +678,6 @@ final class Bridge {
         PairAttempt a = attempt;
         if (a != null) a.cancelled = true;
         attempt = null;
-    }
-
-    // ── Tailscale ───────────────────────────────────────────────────────────
-
-    private boolean tailscaleInstalled() {
-        try {
-            activity.getPackageManager().getPackageInfo(TAILSCALE, 0);
-            return true;
-        } catch (PackageManager.NameNotFoundException e) {
-            return false;
-        }
-    }
-
-    /** Open Tailscale on the phone, or its Google Play page if it is not installed. */
-    @JavascriptInterface
-    public void openTailscale() {
-        ui.post(() -> {
-            Intent i = activity.getPackageManager().getLaunchIntentForPackage(TAILSCALE);
-            if (i == null) i = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + TAILSCALE));
-            try {
-                activity.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            } catch (Exception e) {
-                try {
-                    activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + TAILSCALE))
-                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-                } catch (Exception ignored) {
-                }
-            }
-        });
     }
 
     // ── clipboard ───────────────────────────────────────────────────────────
@@ -999,11 +1005,33 @@ final class Bridge {
         ui.post(() -> activity.withStorage(() -> transfers.execute(() -> downloadOne(n, p, path, fname))));
     }
 
+    @JavascriptInterface
+    public void downloadAllowed(final String root, final String path, final String name) {
+        final Pinned n = net; final Vault.Pairing p = pairing;
+        if (n == null || p == null || root == null || path == null || root.length() > 128 || path.length() > 4096) return;
+        final String fname = safeName(name);
+        try {
+            final String route = "/api/library/download?root=" + URLEncoder.encode(root, "UTF-8") + "&path=" + URLEncoder.encode(path, "UTF-8");
+            ui.post(() -> activity.withStorage(() -> transfers.execute(() -> downloadRoute(n, p, route, fname))));
+        } catch (java.io.UnsupportedEncodingException ignored) {}
+    }
+
+    @JavascriptInterface
+    public void remoteScreen(final boolean on) {
+        ui.post(() -> activity.remoteScreen(on));
+    }
+
     private void downloadOne(Pinned n, Vault.Pairing p, String path, String fname) {
+        try {
+            downloadRoute(n, p, "/api/files/download?path=" + URLEncoder.encode(path, "UTF-8"), fname);
+        } catch (java.io.UnsupportedEncodingException ignored) {}
+    }
+
+    private void downloadRoute(Pinned n, Vault.Pairing p, String route, String fname) {
         HttpsURLConnection conn = null;
         Uri target = null;
         try {
-            conn = n.connect("GET", "/api/files/download?path=" + URLEncoder.encode(path, "UTF-8"), p.token, null, 120000);
+            conn = n.connect("GET", route, p.token, null, 120000);
             int code = conn.getResponseCode();
             if (code != 200) {
                 Pinned.Response r = Pinned.response(conn);
@@ -1072,6 +1100,19 @@ final class Bridge {
         int dot = name.lastIndexOf('.');
         String m = dot < 0 ? null : MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substring(dot + 1).toLowerCase());
         return m == null ? "application/octet-stream" : m;
+    }
+
+    @JavascriptInterface
+    public void shareDownloaded(final String uri) {
+        ui.post(() -> {
+            if (uri == null || !uri.startsWith("content://")) return;
+            Uri u = Uri.parse(uri);
+            String type = activity.getContentResolver().getType(u);
+            Intent intent = new Intent(Intent.ACTION_SEND).setType(type == null ? "application/octet-stream" : type)
+                    .putExtra(Intent.EXTRA_STREAM, u).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            try { activity.startActivity(Intent.createChooser(intent, "Отправить файл")); }
+            catch (Exception e) { fileEvent("downError", "", 0, 0, "Не удалось открыть меню отправки"); }
+        });
     }
 
     /** Open a downloaded file in whatever app handles it. */

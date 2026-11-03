@@ -8,13 +8,21 @@ await pc.ensureCertificate(store.PFX, store.tlsPass());
 store.setButton(1, { label: "Test button" });
 const cfg = {
   allow_chat: true, allow_screenshot: true, allow_power: true, allow_shutdown: process.env.AR_SHUTDOWN === "1", confirm_shutdown: true,
+  allow_file_search: process.env.AR_REMOTE_FEATURES === "1", allowed_folders: process.env.AR_ALLOWED || "",
+  allow_tasks: process.env.AR_REMOTE_FEATURES === "1", allow_remote_shutdown: process.env.AR_REMOTE_FEATURES === "1",
   allow_files: true, shared_folder: process.env.AR_SHARED, max_upload_mb: 1, allow_clipboard: true, allow_open_url: true, allow_input: true, allow_launch: true, key_days: 90
 };
 const server = createServer({
   config: () => cfg,
+  tuna: () => process.env.AR_TUNA === "1" ? { v: 1, url: "https://test.ru.tuna.am", key: "a".repeat(64) } : null,
   fireButton: async () => {},
   chat: async function* (text) { yield { text: "echo: " + text }; yield { done: true }; },
   onChange: () => {},
+  // All new dangerous operations are fake even when feature permissions are enabled.
+  runningTasks: async () => [{ pid: 4242, created: "133700000000000000", window: "1234", name: "Test editor", title: "Test document", memory: 123456, exe: "C:\\Private\\editor.exe" }],
+  taskAction: async (_target, action) => { if (!["activate", "close", "kill"].includes(action)) throw Error("bad action"); },
+  processState: async () => "running",
+  shutdown: async () => { throw Error("Real shutdown is forbidden in tests"); },
   confirm: async () => false // the owner at the PC says no: a test must never really shut the machine down
 });
 setInterval(() => {

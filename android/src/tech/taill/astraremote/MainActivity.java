@@ -61,6 +61,24 @@ public final class MainActivity extends Activity {
     private long backgroundedAt;
     private Intent pendingShare;
     private Runnable afterStorage;
+    private boolean remoteMode;
+    private int previousOrientation, previousUi;
+
+    @SuppressWarnings("deprecation")
+    void remoteScreen(boolean on) {
+        if (remoteMode == on) return;
+        remoteMode = on;
+        if (on) {
+            previousOrientation = getRequestedOrientation();
+            previousUi = getWindow().getDecorView().getSystemUiVisibility();
+            setRequestedOrientation(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
+        } else {
+            setRequestedOrientation(previousOrientation);
+            getWindow().getDecorView().setSystemUiVisibility(previousUi);
+        }
+    }
 
     // A crash is written down and shown on the next start, so it can be reported without a cable and logcat.
     private static final String CRASH = "crash.txt";
@@ -193,10 +211,12 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         web.onResume();
+        bridge.resumeInput();
     }
 
     @Override
     protected void onPause() {
+        bridge.pauseInput();
         web.onPause();
         super.onPause();
     }

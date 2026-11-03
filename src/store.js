@@ -50,28 +50,26 @@ function save() {
 
 export const tlsPass = () => load().tls.pass;
 
-// The relay this PC uses, as set on the plugin page ("" = none). Each user runs their own (relay/README.md).
-const RELAY_FILE = path.join(DATA_DIR, "relay.json");
-export function relayUrlSaved() {
-  try {
-    return String(JSON.parse(fs.readFileSync(RELAY_FILE, "utf8")).url || "");
-  } catch {
-    return "";
-  }
+// TUNA settings contain no credentials for the TUNA account. Old settings files are ignored.
+const TUNA_FILE = path.join(DATA_DIR, "tuna.json");
+let tunaSettings;
+export function tunaSaved() {
+  if (tunaSettings !== undefined) return tunaSettings;
+  try { tunaSettings = JSON.parse(fs.readFileSync(TUNA_FILE, "utf8")); }
+  catch { tunaSettings = { enabled: false, url: "", port: 18765 }; }
+  return tunaSettings;
 }
-export function saveRelayUrl(url) {
+export function saveTuna(settings) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.writeFileSync(RELAY_FILE, JSON.stringify({ url: String(url || "") }, null, 2));
+  const value = { enabled: settings.enabled === true, url: String(settings.url || ""), port: settings.port };
+  fs.writeFileSync(TUNA_FILE + ".tmp", JSON.stringify(value));
+  fs.renameSync(TUNA_FILE + ".tmp", TUNA_FILE);
+  tunaSettings = value;
 }
-
-// This PC on the relay: the id phones ask for, and the key only this PC knows (the relay keeps its hash).
-export function relayIdentity() {
+export function tunaKey() {
   load();
-  if (!db.relay) {
-    db.relay = { id: crypto.randomBytes(16).toString("hex"), key: crypto.randomBytes(32).toString("hex") };
-    save();
-  }
-  return db.relay;
+  if (!/^[a-f0-9]{64}$/.test(db.tunaKey || "")) { db.tunaKey = crypto.randomBytes(32).toString("hex"); save(); }
+  return db.tunaKey;
 }
 
 // ── pairing ─────────────────────────────────────────────────────────────────

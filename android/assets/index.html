@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Phone Remote</title>
+<link rel="stylesheet" href="remote-tools.css">
 <style>
 /* Astra's own look: its dark theme, the strawberry accent, Nunito for text and JetBrains Mono for titles */
 @import url(fonts/fonts.css);
@@ -196,6 +197,7 @@ nav .badge{position:absolute;top:4px;left:calc(50% + 6px);min-width:17px;height:
 <div class="toast" id="toast"></div>
 <div id="layer"></div>
 <script src="avatar.js"></script>
+<script src="input.js"></script>
 <script>
 "use strict";
 const $ = (s, el = document) => el.querySelector(s);
@@ -287,13 +289,16 @@ window.__forgotten = () => {
   me = status();
   state = null;
   stopPolling();
+  if (window.RemoteTools?.active) RemoteTools.close();
+  padStop(); $("#layer").innerHTML = "";
   store.del("chat");
   render();
 };
 
 // Android's back button: close what is open, else go to the first tab, else leave the app
 window.__back = () => {
-  if ($("#layer").innerHTML) { liveStop(); $("#layer").innerHTML = ""; return true; }
+  if (window.RemoteTools?.active && !RemoteTools.screen) { RemoteTools.close(); return true; }
+  if ($("#layer").innerHTML) { padStop(); $("#layer").innerHTML = ""; return true; }
   if (me.paired && filePath && tab === "files") { openDir(filePath.split("/").slice(0, -1).join("/")); return true; }
   if (me.paired && tab !== "remote") { tab = "remote"; store.set("tab", tab); render(); return true; }
   return false;
@@ -306,18 +311,18 @@ let online = null;
 let pollTimer = null;
 let volDragging = false;
 
+let refreshing = false;
 async function refresh() {
-  me = status(); // the PC may have told Java about new addresses (e.g. Tailscale)
+  if (refreshing) return;
+  refreshing = true;
   try {
-    state = await getJson("/api/state");
-    online = true;
-  } catch (e) {
-    online = false;
-  }
-  if (!me.paired) return;
-  paintStatus();
-  paintBadge();
-  if (tab === "remote") paintRemote();
+    try { state = await getJson("/api/state"); online = true; }
+    catch (e) { online = false; }
+    me = status();
+    if (!me.paired) return;
+    paintStatus(); paintBadge();
+    if (tab === "remote") paintRemote();
+  } finally { refreshing = false; }
 }
 function startPolling() {
   stopPolling();
@@ -330,11 +335,12 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden && me
 // ── layout ──────────────────────────────────────────────────────────────────
 const TABS = [["remote", "Пульт"], ["chat", "Astra"], ["files", "Файлы"], ["screen", "Экран"], ["more", "Ещё"]];
 function render() {
+  RemoteTools.close();
   const app = $("#app");
   if (!me.paired) return renderPair(app);
   if (!TABS.some(([id]) => id === tab)) tab = "remote";
   app.innerHTML = `
-    <header><span class="dot" id="dot"></span><h1 id="host">${esc(me.pc || "Phone Remote")}</h1></header>
+    <header><span class="dot" id="dot"></span><h1 id="host">${esc(me.pc || "Phone Remote")}</h1><span class="via" id="route"></span></header>
     <main id="main"></main>
     <nav>${TABS.map(([id, label]) => `<button data-tab="${id}" class="${tab === id ? "on" : ""}">${ICON[id === "chat" ? "astra" : id]}<span>${label}</span></button>`).join("")}</nav>`;
   app.querySelectorAll("nav button").forEach((b) => b.onclick = () => { tab = b.dataset.tab; store.set("tab", tab); render(); });
@@ -351,6 +357,7 @@ function paintStatus() {
   if (!dot) return;
   dot.className = "dot " + (online === true ? "on" : online === false ? "off" : "");
   $("#host").textContent = state?.system?.host || me.pc || "Phone Remote";
+  if ($("#route")) $("#route").textContent = online ? me.via || "Домашняя сеть" : "Нет связи";
 }
 
 // files Astra sent to the phone that have not been looked at yet
@@ -434,7 +441,6 @@ function renderRemote(main) {
       </div>
     </div>
     <div class="card" id="tools"><div class="grid two">
-      <button class="tile" id="openPad">${ICON.pad}<span>Тачпад и клавиатура</span></button>
       <button class="tile" id="openApps">${ICON.apps}<span>Программы и игры</span></button>
     </div></div>
     <div class="card"><h2>Кнопки</h2><div class="grid" id="buttons"></div></div>
@@ -461,7 +467,6 @@ function renderRemote(main) {
     } catch (e) { toast(e.message); }
   };
   $("#mixer").onclick = openMixer;
-  $("#openPad").onclick = openPad;
   $("#openApps").onclick = openApps;
   const pos = $("#pos");
   pos.oninput = () => { seekDragging = true; $("#posT").textContent = fmtTime(Number(pos.value)); };
@@ -482,7 +487,6 @@ function paintRemote() {
   if (!$("#stats")) return;
   const s = state;
   $("#banner").innerHTML = online === false ? offlineBanner() : "";
-  if ($("#tsOpen")) $("#tsOpen").onclick = () => AR.openTailscale();
   if (!s) return;
   const sys = s.system || {};
   const gpu = sys.gpu ? `<div class="stat"><b>${sys.gpu.load}%</b><span>видеокарта</span></div><div class="stat"><b>${sys.gpu.temp}°</b><span>её температура</span></div>` : "";
@@ -503,9 +507,8 @@ function paintRemote() {
   const m = s.media;
   paintMedia();
   $("#pp").innerHTML = m?.playing ? ICON.pause : ICON.play;
-  $("#openPad").hidden = s.allow?.input === false;
   $("#openApps").hidden = s.allow?.launch === false;
-  $("#tools").hidden = $("#openPad").hidden && $("#openApps").hidden;
+  $("#tools").hidden = $("#openApps").hidden;
   if (s.volume) {
     if (!volDragging) { $("#vol").value = s.volume.volume; $("#voln").textContent = s.volume.volume; }
     const mute = $("#mute");
@@ -610,201 +613,25 @@ function paintMixer(list) {
 }
 
 // ── the touchpad and the keyboard ───────────────────────────────────────────
-// Events go out in small batches, one request at a time: moves made while a request is on its way
-// add up into the next one, so a slow line means a coarser pointer, never a queue of old moves.
-const pad = { q: [], busy: false, last: 0, failed: false, t: null };
-function padSend(ev) {
-  const last = pad.q[pad.q.length - 1];
-  if (last && last[0] === ev[0] && (ev[0] === "m" || ev[0] === "w")) { last[1] += ev[1]; last[2] += ev[2]; }
-  else if (last && last[0] === "t" && ev[0] === "t") last[1] += ev[1];
-  else pad.q.push(ev);
-  padFlush();
-}
-function padFlush() {
-  if (pad.busy || !pad.q.length) return;
-  const wait = 35 - (Date.now() - pad.last);
-  if (wait > 0) { clearTimeout(pad.t); pad.t = setTimeout(padFlush, wait); return; }
-  const events = pad.q.splice(0);
-  pad.busy = true;
-  pad.last = Date.now();
-  post("/api/input", { events })
-    .then(() => { pad.failed = false; })
-    .catch((e) => { if (!pad.failed) toast(e.message); pad.failed = true; })
-    .finally(() => { pad.busy = false; padFlush(); });
-}
+// A dedicated pinned WebSocket pipelines a bounded number of input batches instead
+// of paying a network round trip for every pointer update.
+const pad = new RemoteInput(AR, {
+  state(text) { const status = $("#padConnection"); if (status) status.textContent = text; },
+  reset() { if (pad.resetGesture) pad.resetGesture(); }
+});
+window.__inputChannel = (id, text) => pad.receive(id, text);
+function padSend(ev) { pad.send(ev); }
+function padStop() { pad.stop(); }
+window.__padPause = padStop;
+window.__padResume = () => { if (!document.hidden && me.paired && state?.allow?.input !== false && $("#remoteStage") && RemoteTools.screen && !pad.active) pad.start(); };
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) padStop();
+  else window.__padResume();
+});
 // [label, virtual key, modifiers: 1 Ctrl, 2 Shift, 4 Alt, 8 Win]
 const PAD_KEYS = [["Esc", 27], ["Tab", 9], ["Win", 91], ["←", 37], ["↑", 38], ["↓", 40], ["→", 39], ["Enter", 13], ["⌫", 8], ["Del", 46],
   ["Пробел", 32], ["Ctrl+C", 67, 1], ["Ctrl+V", 86, 1], ["Ctrl+Z", 90, 1], ["Ctrl+A", 65, 1], ["Alt+Tab", 9, 4], ["Alt+F4", 115, 4],
   ["Win+D", 68, 8], ["F5", 116], ["F11", 122], ["PgUp", 33], ["PgDn", 34], ["Home", 36], ["End", 35]];
-
-function openPad() {
-  buzz();
-  let speed = store.get("padSpeed", 1.6);
-  $("#layer").innerHTML = `<div class="full">
-    <div class="top"><button class="icon-btn" id="padClose" aria-label="Закрыть">${ICON.close}</button><h2>Тачпад</h2>
-      ${state?.allow?.screenshot === false ? "" : `<button class="icon-btn" id="padLive" aria-label="Экран ПК">${ICON.screen}</button>`}
-      <button class="icon-btn" id="padKbd" aria-label="Клавиатура">${ICON.kbd}</button></div>
-    <div class="live" id="live" hidden><img id="liveImg" alt=""><div class="wait" id="liveWait">Загружаю экран…</div>
-      <div class="zc"><button data-z="1">Весь</button><button data-z="2">×2</button><button data-z="3">×3</button><button data-z="0">В центр</button></div></div>
-    <div class="pad" id="pad"><div>Один палец — мышь, касание — клик<br>Два пальца — прокрутка<br>Касание двумя — правый клик<br>Держи «Левую» и веди пальцем — перетаскивание</div></div>
-    <div class="mbtns"><button id="lmb">Левая</button><button id="rmb">Правая</button></div>
-    <div class="keys">${PAD_KEYS.map((k, i) => `<button data-k="${i}">${esc(k[0])}</button>`).join("")}</div>
-    <div class="typer"><textarea id="typer" rows="1" placeholder="Печатай здесь — текст сразу идёт на ПК" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea></div>
-    <div class="vol" style="margin:0 14px 14px"><span class="hint" style="flex:none">Скорость</span><input type="range" id="padSpeed" min="0.6" max="3.6" step="0.1" value="${speed}"></div>
-  </div>`;
-  post("/api/input", { events: [] }).catch((e) => toast(e.message)); // starts the PC's side ahead of the first touch
-  let lmbDown = false;
-  const close = () => { if (lmbDown) padSend(["b", 0, 2]); liveStop(); $("#layer").innerHTML = ""; };
-  $("#padClose").onclick = close;
-  $("#padSpeed").oninput = (e) => { speed = Number(e.target.value); store.set("padSpeed", speed); };
-
-  const el = $("#pad");
-  const pts = new Map();
-  let g = null, fx = 0, fy = 0, sv = 0, sh = 0;
-  el.onpointerdown = (e) => {
-    try { el.setPointerCapture(e.pointerId); } catch {}
-    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pts.size === 1) g = { t: Date.now(), moved: 0, fingers: 1 };
-    else if (g) g.fingers = Math.max(g.fingers, pts.size);
-    el.classList.add("active");
-  };
-  el.onpointermove = (e) => {
-    const p = pts.get(e.pointerId);
-    if (!p) return;
-    const dx = e.clientX - p.x, dy = e.clientY - p.y;
-    p.x = e.clientX;
-    p.y = e.clientY;
-    if (g) g.moved += Math.abs(dx) + Math.abs(dy);
-    if (pts.size === 1) {
-      // faster strokes go further, as on a laptop touchpad
-      const k = speed * (1 + Math.min(2.5, Math.hypot(dx, dy) / 14));
-      fx += dx * k;
-      fy += dy * k;
-      const ix = Math.trunc(fx), iy = Math.trunc(fy);
-      if (ix || iy) { fx -= ix; fy -= iy; padSend(["m", ix, iy]); }
-    } else if (pts.size === 2) {
-      // each finger reports its own move: half of each is the pair's; the page follows the fingers
-      sv += dy * 2;
-      sh -= dx * 2;
-      const v = Math.trunc(sv), h = Math.trunc(sh);
-      if (Math.abs(v) >= 8 || Math.abs(h) >= 8) { sv -= v; sh -= h; padSend(["w", v, h]); }
-    }
-  };
-  const lift = (e, cancelled) => {
-    if (!pts.delete(e.pointerId) || pts.size) return;
-    if (g && !cancelled && Date.now() - g.t < 280 && g.moved < 14) { padSend(["b", g.fingers >= 2 ? 1 : 0, 0]); buzz(); }
-    g = null;
-    sv = sh = 0;
-    el.classList.remove("active");
-  };
-  el.onpointerup = (e) => lift(e, false);
-  el.onpointercancel = (e) => lift(e, true);
-
-  const lmb = $("#lmb");
-  const lmbUp = () => { if (!lmbDown) return; lmbDown = false; lmb.classList.remove("on"); padSend(["b", 0, 2]); };
-  lmb.onpointerdown = (e) => { try { lmb.setPointerCapture(e.pointerId); } catch {} lmbDown = true; lmb.classList.add("on"); buzz(); padSend(["b", 0, 1]); };
-  lmb.onpointerup = lmbUp;
-  lmb.onpointercancel = lmbUp;
-  $("#rmb").onclick = () => { buzz(); padSend(["b", 1, 0]); };
-  $("#layer").querySelectorAll("[data-k]").forEach((b) => b.onclick = () => {
-    const k = PAD_KEYS[Number(b.dataset.k)];
-    buzz();
-    padSend(["k", k[1], k[2] || 0]);
-  });
-
-  // The phone's keyboard types into this field; what changed in it goes to the PC as typed text and
-  // backspaces, so autocorrect and word suggestions land there too. A zero-width space keeps one
-  // character in the field, so a backspace on an "empty" field still arrives.
-  const ta = $("#typer");
-  const Z = "​";
-  ta.value = Z;
-  let prev = Z;
-  ta.oninput = () => {
-    const cur = ta.value;
-    let i = 0;
-    while (i < prev.length && i < cur.length && prev[i] === cur[i]) i++;
-    for (let n = prev.length - i; n > 0; n--) padSend(["k", 8, 0]);
-    const ins = cur.slice(i).replace(/​/g, "");
-    if (ins) padSend(["t", ins]);
-    prev = cur;
-    if (!cur.startsWith(Z) || cur.includes("\n") || cur.length > 80) { ta.value = Z; prev = Z; }
-  };
-  $("#padKbd").onclick = () => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); };
-  liveSetup();
-}
-
-// ── the live screen above the touchpad ──────────────────────────────────────
-// One frame at a time: the next is asked for when the last has come, so a slow line shows fewer
-// frames, never old ones. The PC draws a ring around the pointer (also while Windows hides it) and
-// follows it across monitors; ×2 and ×3 show the part of the screen around the pointer, larger.
-// A tap on the picture puts the pointer there and clicks.
-const live = { on: false, zoom: 1, run: 0, last: null };
-function liveStop() { live.run++; }
-function liveSetup() {
-  const btn = $("#padLive");
-  if (!btn) return;
-  live.on = store.get("padLive", true);
-  live.zoom = store.get("padZoom", 1);
-  const paintBtns = () => {
-    btn.classList.toggle("on", live.on);
-    $("#live").hidden = !live.on;
-    $("#live").querySelectorAll("[data-z]").forEach((b) => b.classList.toggle("on", Number(b.dataset.z) === live.zoom));
-  };
-  btn.onclick = () => {
-    buzz();
-    live.on = !live.on;
-    store.set("padLive", live.on);
-    paintBtns();
-    if (live.on) liveLoop(); else liveStop();
-  };
-  $("#live").querySelectorAll("[data-z]").forEach((b) => b.onclick = (e) => {
-    e.stopPropagation();
-    buzz();
-    const z = Number(b.dataset.z);
-    if (z === 0) { // the pointer to the middle of the monitor it is on
-      padSend(["p", live.last?.screen || 0, 5000, 5000]);
-      return;
-    }
-    live.zoom = z;
-    store.set("padZoom", z);
-    paintBtns();
-  });
-  const img = $("#liveImg");
-  img.onclick = (e) => {
-    const L = live.last;
-    if (!L) return;
-    const r = img.getBoundingClientRect();
-    const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height;
-    buzz();
-    padSend(["p", L.screen, Math.round((L.rect[0] + fx * L.rect[2]) * 10000), Math.round((L.rect[1] + fy * L.rect[3]) * 10000)]);
-    padSend(["b", 0, 0]);
-  };
-  paintBtns();
-  if (live.on) liveLoop();
-}
-async function liveLoop() {
-  const run = ++live.run;
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const width = Math.min(1280, Math.round(innerWidth * (devicePixelRatio || 1)));
-  let failed = false;
-  while (run === live.run && $("#liveImg")) {
-    const t0 = Date.now();
-    if (document.hidden) { await sleep(500); continue; }
-    try {
-      const f = await getJson(`/api/screen/live?w=${width}&zoom=${live.zoom}&q=60`);
-      if (run !== live.run || !$("#liveImg")) break;
-      live.last = f;
-      $("#liveImg").src = "data:image/jpeg;base64," + f.img;
-      $("#liveWait").hidden = true;
-      failed = false;
-    } catch (e) {
-      if (!failed) toast(e.message);
-      failed = true;
-      await sleep(1500);
-    }
-    await sleep(Math.max(40, 150 - (Date.now() - t0)));
-  }
-}
 
 // ── programs and games ──────────────────────────────────────────────────────
 // The list (with icons) is kept on the phone and refreshed each time the view opens.
@@ -868,13 +695,9 @@ async function launchApp(id) {
   } catch (e) { toast(e.message); }
 }
 
-// what to try when the PC does not answer; away from home that is almost always Tailscale
+// Both routes require the PC to stay awake.
 function offlineBanner() {
-  const why = me.relay ? "Приложение пробует и домашнюю сеть, и ретранслятор — ждать ничего не нужно."
-    : me.tailscale ? (me.tailscaleApp ? "Не дома? Включи Tailscale на телефоне." : "Не дома? Поставь Tailscale на телефон и войди тем же аккаунтом, что на ПК.")
-    : "Вне дома нужен ретранслятор — подробнее во вкладке «Ещё».";
-  return `<div class="banner">ПК не отвечает. Он должен быть включён и не спать, а Astra — запущена.<br>${why}
-    ${!me.relay && me.tailscale ? `<br><button class="btn" id="tsOpen" style="margin-top:8px;padding:7px 12px">${me.tailscaleApp ? "Открыть Tailscale" : "Установить Tailscale"}</button>` : ""}</div>`;
+  return '<div class="banner">ПК недоступен. Проверь питание и запуск Astra. ' + (me.tuna ? 'Вне дома также должен работать туннель в TUNA Desktop.' : 'Открой приложение дома после включения TUNA в плагине или подключись по новому QR-коду.') + '</div>';
 }
 
 const fmtUptime = (m) => m == null ? "–" : m < 60 ? m + " мин" : m < 1440 ? Math.floor(m / 60) + " ч" : Math.floor(m / 1440) + " д";
@@ -1126,16 +949,18 @@ window.__files = (e) => {
 
 function renderFiles(main) {
   const allow = state?.allow || {};
-  if (state && allow.files === false) { main.innerHTML = '<div class="card hint">Обмен файлами выключен в настройках плагина на ПК.</div>'; return; }
+  if (state && allow.files === false) { main.innerHTML = `<div class="card hint">Обмен файлами выключен в настройках плагина на ПК.</div>${allow.file_search ? '<button class="btn primary wide" id="findPcFiles">Найти файл на ПК</button>' : ''}`; $("#findPcFiles")?.addEventListener("click", () => RemoteTools.openLibrary()); return; }
   const sent = state?.sent || [];
   if (sent.length) store.set("seenSent", sent[0].at);
   main.innerHTML = `
+    ${allow.file_search ? '<div class="toolbar"><button class="btn primary" id="findPcFiles">Найти файл на ПК</button></div>' : ''}
     <div class="toolbar"><button class="btn primary" id="pick">${"Отправить на ПК"}</button><button class="btn" id="reload">Обновить</button></div>
     <div class="toolbar"><button class="btn" id="openPc">Открыть на ПК</button><button class="btn" id="openPhone">Папка на телефоне</button></div>
     <div class="card" id="xferCard" hidden><h2>Передача</h2><div id="xfers"></div></div>
     ${sent.length ? `<div class="card"><h2>Astra прислала</h2><div class="files" id="sent"></div></div>` : ""}
     <div class="card"><h2>Общая папка на ПК</h2><div class="crumbs" id="crumbs"></div><div class="files" id="list"><p class="hint">Загружаю…</p></div></div>
     <p class="hint">Всё, что отправляешь с телефона, попадает в папку «С телефона». Astra видит эту папку и может сама положить сюда файл для тебя — просто попроси её в чате. Отправить на ПК можно и из любого приложения: «Поделиться» → Phone Remote.</p>`;
+  $("#findPcFiles")?.addEventListener("click", () => RemoteTools.openLibrary());
   $("#pick").onclick = () => AR.pickFiles();
   $("#reload").onclick = () => { refresh(); loadDir(); };
   $("#openPc").onclick = async () => { buzz(); try { await post("/api/files/open", { path: filePath }); toast("Папка открыта на ПК"); } catch (e) { toast(e.message); } };
@@ -1205,54 +1030,8 @@ function paintTransfers() {
 }
 
 // ── screen ──────────────────────────────────────────────────────────────────
-let shotUrl = null;
-let autoShot = null;
-let screenIndex = 0;
-
 function renderScreen(main) {
-  if (state && !state.allow?.screenshot) {
-    main.innerHTML = '<div class="card hint">Снимок экрана выключен в настройках плагина на ПК.</div>';
-    return;
-  }
-  const n = state?.screens || 1;
-  main.innerHTML = `
-    <div class="toolbar">
-      <button class="btn primary" id="snap">Обновить</button>
-      <button class="icon-btn" id="saveShot" aria-label="В галерею">${ICON.save}</button>
-      <label class="switch"><input type="checkbox" id="auto"> каждые 3 с</label>
-      ${n > 1 ? `<span style="flex:1"></span>${Array.from({ length: n }, (_, i) => `<button class="chip ${i === screenIndex ? "on" : ""}" data-s="${i}">${i + 1}</button>`).join("")}` : ""}
-    </div>
-    <img class="shot" id="shot" alt="">
-    <p class="hint">Нажми на снимок, чтобы рассмотреть в полном размере.</p>`;
-  $("#snap").onclick = snap;
-  $("#saveShot").onclick = () => { if (shotUrl) { buzz(); AR.saveImage(shotUrl.split(",")[1]); } else toast("Сначала обнови снимок"); };
-  $("#auto").checked = !!autoShot;
-  $("#auto").onchange = (e) => {
-    clearInterval(autoShot);
-    autoShot = e.target.checked ? setInterval(() => { if (!document.hidden && $("#shot")) snap(); else if (!$("#shot")) { clearInterval(autoShot); autoShot = null; } }, 3000) : null;
-  };
-  main.querySelectorAll("[data-s]").forEach((b) => b.onclick = () => { screenIndex = Number(b.dataset.s); renderScreen(main); snap(); });
-  $("#shot").onclick = () => {
-    if (!shotUrl) return;
-    $("#layer").innerHTML = `<div class="viewer" id="viewer"><img src="${shotUrl}" alt=""></div>`;
-    $("#viewer").onclick = () => { $("#layer").innerHTML = ""; };
-  };
-  if (shotUrl) $("#shot").src = shotUrl; else snap();
-}
-
-async function snap() {
-  if (!$("#shot") || snap.busy) return;
-  snap.busy = true;
-  try {
-    const w = Math.min(2400, Math.round(screen.width * (devicePixelRatio || 1) * 1.5));
-    const r = check(await native((id) => AR.screenshot(id, screenIndex, w)));
-    shotUrl = "data:image/jpeg;base64," + r.text;
-    if ($("#shot")) $("#shot").src = shotUrl;
-  } catch (e) {
-    toast(e.message);
-  } finally {
-    snap.busy = false;
-  }
+  RemoteTools.mountScreen(main);
 }
 
 // ── more: power, clipboard, settings ────────────────────────────────────────
@@ -1263,7 +1042,7 @@ function renderMore(main) {
     ["monitor_off", "Выключить монитор", ICON.monitor, ""],
     ["sleep", "Сон", ICON.moon, "Перевести ПК в сон? Разбудить его с телефона не получится."],
     ...(allow.shutdown ? [
-      ["shutdown", "Выключить", ICON.power, "Выключить ПК через минуту?", "danger"],
+      ...(!allow.remote_shutdown ? [["shutdown", "Выключить", ICON.power, "Выключить ПК через минуту?", "danger"]] : []),
       ["restart", "Перезагрузить", ICON.restart, "Перезагрузить ПК через минуту?", "danger"],
       ["cancel", "Отменить выключение", ICON.cancel, ""]
     ] : [])
@@ -1282,19 +1061,25 @@ function renderMore(main) {
     ? `<label class="setting"><div>Блокировать приложение<br><span class="hint">Через минуту в фоне — отпечаток, лицо или PIN телефона</span></div><input type="checkbox" id="lockSet" ${me.lock ? "checked" : ""}></label>`
     : '<p class="hint" style="margin:0 0 8px">Чтобы приложение блокировалось в фоне, поставь на телефон PIN, графический ключ или отпечаток.</p>';
   const key = state?.device?.expires ? `<p class="hint" style="margin:8px 0">Ключ этого телефона действует до ${new Date(state.device.expires).toLocaleDateString("ru-RU")}. Потом нужно будет подключиться заново по QR-коду.</p>` : "";
-  const remote = `<div class="card"><h2>Вне дома</h2>${me.relay
-      ? '<p class="hint" style="margin:0">Работает откуда угодно: дома — напрямую, вне дома — через ретранслятор ПК. Ретранслятор только передаёт данные, внутри та же защищённая связь с ПК. ПК должен быть включён и не спать (в настройках плагина: «Не уходить в сон, пока подключён телефон»).</p>'
-      : `<p class="hint" style="margin:0 0 10px">Сейчас приложение работает только в одной сети с ПК. Чтобы пользоваться им откуда угодно, впиши ретранслятор в настройках плагина на ПК (поле «Ретранслятор») и открой приложение дома один раз — оно само узнает адрес. Или поставь Tailscale на ПК и телефон.</p>
-         <button class="btn" id="tsMore">${me.tailscaleApp ? "Открыть Tailscale" : "Установить Tailscale"}</button>`}</div>`;
+  const remote = `<div class="card"><h2>Вне дома — TUNA</h2>
+    <p class="hint">На ПК создай HTTP-туннель в TUNA Desktop к адресу, указанному в плагине (обычно 127.0.0.1:18765), и сохрани публичную ссылку в Phone Remote. Открой приложение дома или подключись по новому QR-коду — настройки передадутся автоматически.</p>
+    <p class="hint">Проверь доступ с выключенным Wi-Fi. ПК, Astra и TUNA Desktop должны работать. Команды, чат и файлы остаются зашифрованными до ПК. Если ссылка изменилась, обнови её ниже; сертификат и ключ телефона сохранятся.</p>
+    <label for="pcAddress" class="hint">Новая публичная HTTPS-ссылка TUNA</label>
+    <input id="pcAddress" type="url" placeholder="https://твой-поддомен.a.tuna.free" maxlength="300" style="width:100%;margin:8px 0;padding:10px;background:var(--raised);border:1px solid var(--line-strong);border-radius:12px" autocapitalize="none" spellcheck="false">
+    <button class="btn" id="savePcAddress">Обновить ссылку TUNA</button></div>`;
   const astraCard = `<div class="card"><h2>Astra на телефоне</h2>
       <label class="setting"><div>Моделька на вкладке Astra<br><span class="hint">Та, которую носит персонаж в Astra. Скачивается один раз, хранится только в приложении и стирается при отключении телефона</span></div><input type="checkbox" id="avSet" ${store.get("avatar", true) ? "checked" : ""}></label>
       <label class="setting"><div>Читать ответы вслух<br><span class="hint">Голосом телефона; моделька при этом говорит</span></div><input type="checkbox" id="spSet" ${store.get("speak", false) ? "checked" : ""}></label>
       <label class="setting"><div>Уведомления от Astra<br><span class="hint">Попроси Astra «напомни мне на телефон…». Пока приложение открыто — сразу, иначе примерно раз в 15 минут</span></div><input type="checkbox" id="ntSet" ${AR.notesEnabled() ? "checked" : ""}></label>
       <label class="setting"><div>Разрешить скриншоты приложения<br><span class="hint">Иначе Android закрывает экран приложения от скриншотов и записи экрана — чтобы снимки ПК не утекали</span></div><input type="checkbox" id="shSet" ${AR.screenshotsAllowed() ? "checked" : ""}></label>
       <p class="hint" style="margin:6px 0 0">На главный экран можно добавить виджет с первыми четырьмя кнопками, а в шторку — плитки «Пауза на ПК» и «Заблокировать ПК».</p></div>`;
-  main.innerHTML = power + clip + astraCard + remote + `<div class="card"><h2>Это устройство</h2>${lockRow}${key}
+  const awayTools = `<div class="card"><h2>Удалённая работа</h2><div class="remote-actions">${allow.file_search ? '<button class="btn" id="awayFiles">Найти файл</button>' : ''}${allow.tasks ? '<button class="btn" id="awayTasks">Работающие программы</button>' : ''}${allow.remote_shutdown ? '<button class="btn danger" id="awayPower">Выключение ПК…</button>' : ''}</div><p class="hint">Поиск, управление программами и подтверждение выключения на телефоне отдельно разрешаются в настройках плагина на ПК.</p></div>`;
+  main.innerHTML = awayTools + power + clip + astraCard + remote + `<div class="card"><h2>Это устройство</h2>${lockRow}${key}
     <button class="btn danger" id="unpair" style="margin-top:6px">Отключить этот телефон</button></div>`;
 
+  $("#awayFiles")?.addEventListener("click", () => RemoteTools.openLibrary());
+  $("#awayTasks")?.addEventListener("click", () => RemoteTools.openTasks());
+  $("#awayPower")?.addEventListener("click", () => RemoteTools.openPower());
   main.querySelectorAll("[data-p]").forEach((b) => b.onclick = async () => {
     const it = items.find((x) => x[0] === b.dataset.p);
     if (it[3] && !confirm(it[3])) return;
@@ -1318,7 +1103,13 @@ function renderMore(main) {
       toast("Скопировано на телефон");
     } catch (e) { toast(e.message); }
   };
-  if ($("#tsMore")) $("#tsMore").onclick = () => AR.openTailscale();
+  $("#savePcAddress").onclick = () => {
+    try {
+      const r = JSON.parse(AR.setTunaAddress($("#pcAddress").value.trim()));
+      if (r.error) throw new Error(r.error);
+      toast("Ссылка TUNA сохранена. Сертификат ПК будет проверен при подключении.");
+    } catch (e) { toast(e.message); }
+  };
   $("#avSet").onchange = (e) => store.set("avatar", e.target.checked);
   $("#spSet").onchange = (e) => store.set("speak", e.target.checked);
   $("#ntSet").onchange = (e) => AR.setNotes(e.target.checked);
@@ -1355,6 +1146,9 @@ window.__shared = (e) => {
   });
 };
 
+</script>
+<script src="remote-tools.js"></script>
+<script>
 render();
 AR.ready();
 </script>

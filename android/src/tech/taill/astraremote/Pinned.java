@@ -49,15 +49,15 @@ final class Pinned {
 
     private final String[] hosts;
     private final int port;
-    private final Relay relay; // null: home network and Tailscale only
+    private final TunaTunnel tuna; // null: home network only
     private final SSLSocketFactory factory;
     private volatile String current;
 
-    Pinned(String[] hosts, int port, final String fingerprint, String lastHost, Relay relay) {
+    Pinned(String[] hosts, int port, final String fingerprint, String lastHost, TunaTunnel tuna) {
         this.hosts = hosts;
         this.port = port;
-        this.relay = relay;
-        this.current = lastHost != null && !lastHost.isEmpty() && (relay != null || !Relay.HOST.equals(lastHost)) ? lastHost : hosts[0];
+        this.tuna = tuna;
+        this.current = lastHost != null && (java.util.Arrays.asList(hosts).contains(lastHost) || tuna != null && TunaTunnel.HOST.equals(lastHost)) ? lastHost : hosts.length > 0 ? hosts[0] : tuna != null ? TunaTunnel.HOST : "";
         final byte[] pin = fingerprint.toLowerCase().getBytes(StandardCharsets.US_ASCII);
         try {
             TrustManager tm = new X509TrustManager() {
@@ -91,6 +91,35 @@ final class Pinned {
         }
     }
 
+    /** Dedicated pinned TLS connection for the input WebSocket; no credentials before handshake. */
+    javax.net.ssl.SSLSocket inputSocket() throws IOException {
+        List<String> order = new ArrayList<>();
+        if (!current.isEmpty()) order.add(current);
+        for (String h : hosts) if (!order.contains(h)) order.add(h);
+        if (tuna != null && !order.contains(TunaTunnel.HOST)) order.add(TunaTunnel.HOST);
+        IOException last = null;
+        for (String host : order) {
+            javax.net.ssl.SSLSocket socket = null;
+            try {
+                boolean tunneled = TunaTunnel.HOST.equals(host);
+                java.net.URI endpoint = tunneled ? null : java.net.URI.create(Endpoint.origin(host, port));
+                String address = tunneled ? "127.0.0.1" : endpoint.getHost();
+                int destination = tunneled ? tuna.port() : endpoint.getPort() < 0 ? 443 : endpoint.getPort();
+                socket = (javax.net.ssl.SSLSocket) factory.createSocket();
+                socket.setTcpNoDelay(true);
+                socket.connect(new java.net.InetSocketAddress(address, destination), 3000);
+                socket.setSoTimeout(tunneled ? 30000 : 3000);
+                socket.startHandshake();
+                current = host;
+                return socket;
+            } catch (IOException e) {
+                last = e;
+                if (socket != null) try { socket.close(); } catch (IOException ignored) {}
+            }
+        }
+        throw last != null ? last : new IOException("no address");
+    }
+
     static String hex(byte[] b) {
         StringBuilder s = new StringBuilder();
         for (byte x : b) s.append(String.format("%02x", x));
@@ -102,14 +131,16 @@ final class Pinned {
     }
 
     private HttpsURLConnection open(String host, String method, String path, String token, int readTimeoutMs) throws IOException {
-        // the relay is a port of this app on 127.0.0.1 that leads to the PC (see Relay); the TLS is still the PC's
-        String where = Relay.HOST.equals(host) ? "127.0.0.1:" + relay.port() : host + ":" + port;
-        HttpsURLConnection c = (HttpsURLConnection) new URL("https://" + where + path).openConnection();
+        // the tuna is a port of this app on 127.0.0.1 that leads to the PC (see TunaTunnel); the TLS is still the PC's
+        String origin = TunaTunnel.HOST.equals(host) ? "https://127.0.0.1:" + tuna.port() : Endpoint.origin(host, port);
+        HttpsURLConnection c = (HttpsURLConnection) new URL(origin + path).openConnection();
         c.setSSLSocketFactory(factory);
         c.setHostnameVerifier((h, s) -> true); // see the class comment: the certificate pin is the check
         c.setRequestMethod(method);
         c.setConnectTimeout(3000);
-        c.setReadTimeout(readTimeoutMs);
+        // A loopback TCP connect is immediate, but the inner TLS handshake must wait
+        // for the outer DNS/TCP/TLS/WebSocket setup. LAN's 3 s budget is too short.
+        c.setReadTimeout(TunaTunnel.HOST.equals(host) ? 30000 : Math.min(3000, readTimeoutMs));
         c.setUseCaches(false);
         c.setInstanceFollowRedirects(false);
         if (token != null) c.setRequestProperty("Authorization", "Bearer " + token);
@@ -126,9 +157,9 @@ final class Pinned {
         IOException last = null;
         boolean mismatch = false;
         List<String> order = new ArrayList<>();
-        order.add(current);
+        if (!current.isEmpty()) order.add(current);
         for (String h : hosts) if (!h.equals(current)) order.add(h);
-        if (relay != null && !order.contains(Relay.HOST)) order.add(Relay.HOST); // from anywhere, last unless it worked last time
+        if (tuna != null && !order.contains(TunaTunnel.HOST)) order.add(TunaTunnel.HOST); // from anywhere, last unless it worked last time
         for (String host : order) {
             HttpsURLConnection c = open(host, method, path, token, readTimeoutMs);
             if (body != null) {
@@ -142,12 +173,15 @@ final class Pinned {
             } catch (SSLException e) {
                 if (String.valueOf(e.getMessage()).contains(MISMATCH) || e.getCause() instanceof CertificateException) mismatch = true;
                 last = e;
+                c.disconnect();
                 continue;
             } catch (IOException e) {
                 last = e;
+                c.disconnect();
                 continue;
             }
             current = host;
+            c.setReadTimeout(readTimeoutMs);
             if (body != null) {
                 try (OutputStream o = c.getOutputStream()) {
                     body.writeTo(o);
@@ -157,7 +191,7 @@ final class Pinned {
             return c;
         }
         if (mismatch) throw new IOException(MISMATCH);
-        if (relay != null && relay.offline) throw new IOException(Relay.OFFLINE);
+        if (tuna != null && tuna.offline) throw new IOException(TunaTunnel.OFFLINE);
         throw last != null ? last : new IOException("no address");
     }
 
@@ -174,7 +208,7 @@ final class Pinned {
         HttpsURLConnection c = connect(method, path, token, json == null ? null : json.getBytes(StandardCharsets.UTF_8), readTimeoutMs);
         try {
             // read to the end and close the stream, but no disconnect(): the connection goes back to the
-            // pool for the next request — through the relay that saves a new tunnel and TLS each time
+            // pool for the next request — through the tuna that saves a new tunnel and TLS each time
             return response(c);
         } catch (IOException e) {
             c.disconnect();
