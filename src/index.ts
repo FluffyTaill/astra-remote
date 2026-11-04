@@ -16,6 +16,7 @@ import * as path from "node:path";
 import { plugin, tool, s, Plugin } from "astra-plugin-sdk";
 import { createServer, addresses, certFingerprint } from "./server.js";
 import { startTuna, tunaUrl, TUNA_PORT } from "./tuna.js";
+import { historyReply, replyChunks } from "./reply.js";
 import * as pc from "./pc.js";
 import * as store from "./store.js";
 import * as files from "./files.js";
@@ -74,22 +75,15 @@ const tunaInfo = () => {
 const NO_GRANT = (what) => `Astra не дала плагину право ${what}. Разрешения выдаются только при установке: в Astra → Мастерская ` +
   "выключи Phone Remote, установи его заново и в окне установки отметь все разрешения.";
 
+const CHAT_HISTORY = path.join(process.env.APPDATA || ".", "astra", "astra", "config", "chat_history");
 async function* chat(text, _fresh, aloud = false) {
+  const since = Date.now();
   try {
     // An empty ID lets Astra choose the plugin's current thread. Cached IDs can
     // be rotated or deleted, and older daemons may silently write to the wrong one.
-    for await (const chunk of ctxRef.sendChatMessage(text, { voiceEnabled: aloud })) {
-      if (chunk.error) {
-        yield { error: chunk.error };
-        return;
-      }
-      if (chunk.text) yield { text: chunk.text };
-      if (chunk.done) {
-        yield { done: true };
-        return;
-      }
-    }
-    yield { error: "Ответ Astra прервался до завершения. Проверь соединение и повтори запрос." };
+    yield* replyChunks(ctxRef.sendChatMessage(text, { voiceEnabled: aloud }), () => historyReply(CHAT_HISTORY, text, since), {
+      onEnd: ({ how, chunks, chars }) => console.log(`chat reply: ${how}; ${chunks} chunks, ${chars} chars, ${Date.now() - since} ms`)
+    });
   } catch (e) {
     if (e.code === 7) throw new Error(NO_GRANT("писать в чат"));
     throw e;
