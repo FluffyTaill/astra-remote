@@ -99,6 +99,38 @@ test("pairing, auth and the API", async (t) => {
   assert.equal((await call("GET", "/api/state", null, token)).status, 401, "revoked key is refused");
 });
 
+test("quiet chat sends heartbeats until Astra responds", async (t) => {
+  const { p, port, secret, fp } = await start({ AR_CHAT_DELAY: "5000" });
+  t.after(() => p.kill());
+  const token = (await pairAs(client(port, fp), secret, "Slow chat")).json.token;
+  const lines = [], gaps = [];
+  let last = Date.now();
+  await new Promise((resolve, reject) => {
+    const req = https.request({ host: "127.0.0.1", port, path: "/api/chat", method: "POST", rejectUnauthorized: false,
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token } }, (res) => {
+      assert.equal(res.socket.getPeerCertificate().fingerprint256.replace(/:/g, "").toLowerCase(), fp);
+      let buffered = "";
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => {
+        gaps.push(Date.now() - last);
+        last = Date.now();
+        buffered += chunk;
+        let i;
+        while ((i = buffered.indexOf("\n")) >= 0) { lines.push(JSON.parse(buffered.slice(0, i))); buffered = buffered.slice(i + 1); }
+      });
+      res.on("end", resolve);
+      res.on("error", reject);
+    });
+    req.on("error", reject);
+    req.end(JSON.stringify({ text: "slow" }));
+  });
+  assert.ok(lines.filter((line) => line.waiting).length >= 3, "initial and periodic heartbeat");
+  // released phones give up after 3 s of silence on home Wi-Fi
+  assert.ok(Math.max(...gaps) < 2500, `longest silence ${Math.max(...gaps)} ms`);
+  assert.ok(lines.some((line) => line.text === "echo: slow"));
+  assert.equal(lines.at(-1).done, true);
+});
+
 test("shared folder: upload, list, download, nothing outside", async (t) => {
   const { p, port, secret, fp } = await start();
   t.after(() => p.kill());

@@ -52,6 +52,7 @@ final class Pinned {
     private final TunaTunnel tuna; // null: home network only
     private final SSLSocketFactory factory;
     private volatile String current;
+    private volatile long probedAt; // when the current address last passed probe()
 
     Pinned(String[] hosts, int port, final String fingerprint, String lastHost, TunaTunnel tuna) {
         this.hosts = hosts;
@@ -130,6 +131,16 @@ final class Pinned {
         return current;
     }
 
+    /** A pinned handshake with a LAN address within 3 s: one that takes the TCP connection and then stays silent is skipped. */
+    private void probe(String host) throws IOException {
+        java.net.URI endpoint = java.net.URI.create(Endpoint.origin(host, port));
+        try (javax.net.ssl.SSLSocket s = (javax.net.ssl.SSLSocket) factory.createSocket()) {
+            s.connect(new java.net.InetSocketAddress(endpoint.getHost(), endpoint.getPort() < 0 ? 443 : endpoint.getPort()), 3000);
+            s.setSoTimeout(3000);
+            s.startHandshake();
+        }
+    }
+
     private HttpsURLConnection open(String host, String method, String path, String token, int readTimeoutMs) throws IOException {
         // the tuna is a port of this app on 127.0.0.1 that leads to the PC (see TunaTunnel); the TLS is still the PC's
         String origin = TunaTunnel.HOST.equals(host) ? "https://127.0.0.1:" + tuna.port() : Endpoint.origin(host, port);
@@ -138,9 +149,10 @@ final class Pinned {
         c.setHostnameVerifier((h, s) -> true); // see the class comment: the certificate pin is the check
         c.setRequestMethod(method);
         c.setConnectTimeout(3000);
-        // A loopback TCP connect is immediate, but the inner TLS handshake must wait
-        // for the outer DNS/TCP/TLS/WebSocket setup. LAN's 3 s budget is too short.
-        c.setReadTimeout(TunaTunnel.HOST.equals(host) ? 30000 : Math.min(3000, readTimeoutMs));
+        // Android fixes the read limit when the connection opens: a later setReadTimeout is ignored,
+        // so this is the limit for the whole reply. (probe() is what skips a dead address quickly.)
+        // Through the tunnel the TLS handshake also waits for the outer DNS/TCP/TLS/WebSocket setup.
+        c.setReadTimeout(TunaTunnel.HOST.equals(host) ? Math.max(30000, readTimeoutMs) : readTimeoutMs);
         c.setUseCaches(false);
         c.setInstanceFollowRedirects(false);
         if (token != null) c.setRequestProperty("Authorization", "Bearer " + token);
@@ -161,6 +173,21 @@ final class Pinned {
         for (String h : hosts) if (!h.equals(current)) order.add(h);
         if (tuna != null && !order.contains(TunaTunnel.HOST)) order.add(TunaTunnel.HOST); // from anywhere, last unless it worked last time
         for (String host : order) {
+            // the address that answered a moment ago needs no probe (the phone polls every few seconds)
+            boolean known = host.equals(current) && System.currentTimeMillis() - probedAt < 60000;
+            if (!known && !TunaTunnel.HOST.equals(host)) {
+                try {
+                    probe(host);
+                    probedAt = System.currentTimeMillis();
+                } catch (SSLException e) {
+                    if (String.valueOf(e.getMessage()).contains(MISMATCH) || e.getCause() instanceof CertificateException) mismatch = true;
+                    last = e;
+                    continue;
+                } catch (IOException e) {
+                    last = e;
+                    continue;
+                }
+            }
             HttpsURLConnection c = open(host, method, path, token, readTimeoutMs);
             if (body != null) {
                 c.setDoOutput(true);
@@ -181,7 +208,6 @@ final class Pinned {
                 continue;
             }
             current = host;
-            c.setReadTimeout(readTimeoutMs);
             if (body != null) {
                 try (OutputStream o = c.getOutputStream()) {
                     body.writeTo(o);

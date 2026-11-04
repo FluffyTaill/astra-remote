@@ -13,7 +13,7 @@
 import * as os from "node:os";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { plugin, tool, s } from "astra-plugin-sdk";
+import { plugin, tool, s, Plugin } from "astra-plugin-sdk";
 import { createServer, addresses, certFingerprint } from "./server.js";
 import { startTuna, tunaUrl, TUNA_PORT } from "./tuna.js";
 import * as pc from "./pc.js";
@@ -38,7 +38,6 @@ let ctxRef = null;
 let server = null;
 let listening = { port: 0, error: "" };
 let fingerprint = "";
-let conversationId = ""; // the chat the app talks into; "" = this plugin's own thread
 
 function config() {
   const c = ctxRef?.config || {};
@@ -75,30 +74,25 @@ const tunaInfo = () => {
 const NO_GRANT = (what) => `Astra не дала плагину право ${what}. Разрешения выдаются только при установке: в Astra → Мастерская ` +
   "выключи Phone Remote, установи его заново и в окне установки отметь все разрешения.";
 
-async function* chat(text, fresh, aloud = false) {
-  if (fresh) conversationId = "";
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      for await (const chunk of ctxRef.sendChatMessage(text, { conversationId, voiceEnabled: aloud })) {
-        if (chunk.conversationId) conversationId = chunk.conversationId;
-        if (chunk.error) {
-          yield { error: chunk.error };
-          return;
-        }
-        if (chunk.text) yield { text: chunk.text };
-        if (chunk.done) break;
+async function* chat(text, _fresh, aloud = false) {
+  try {
+    // An empty ID lets Astra choose the plugin's current thread. Cached IDs can
+    // be rotated or deleted, and older daemons may silently write to the wrong one.
+    for await (const chunk of ctxRef.sendChatMessage(text, { voiceEnabled: aloud })) {
+      if (chunk.error) {
+        yield { error: chunk.error };
+        return;
       }
-      yield { done: true };
-      return;
-    } catch (e) {
-      // the conversation was deleted in Astra: start a new one, once
-      if (attempt === 0 && conversationId && (e.code === 5 || /conversation_gone/.test(e.message))) {
-        conversationId = "";
-        continue;
+      if (chunk.text) yield { text: chunk.text };
+      if (chunk.done) {
+        yield { done: true };
+        return;
       }
-      if (e.code === 7) throw new Error(NO_GRANT("писать в чат"));
-      throw e;
     }
+    yield { error: "Ответ Astra прервался до завершения. Проверь соединение и повтори запрос." };
+  } catch (e) {
+    if (e.code === 7) throw new Error(NO_GRANT("писать в чат"));
+    throw e;
   }
 }
 
@@ -114,7 +108,7 @@ async function* chatAloud(text, fresh) {
   try {
     await pc.voiceStart(daemon);
   } catch (e) {
-    yield { voiceEnd: true, heard: false, error: e.message || String(e) };
+    console.warn(`Voice capture could not start; using phone speech: ${e.message || String(e)}`);
     yield* chat(text, fresh);
     return;
   }
@@ -132,7 +126,7 @@ async function* chatAloud(text, fresh) {
     }
   })();
   const t0 = Date.now();
-  let doneAt = 0, heard = false, lastLoud = 0, error = "";
+  let doneAt = 0, heard = false, lastLoud = 0, captureFailed = false;
   // her volume on the PC before she was turned down (null = left alone)
   let before = config().voice_quiet_pc ? await quietOnPc(daemon) : null;
   try {
@@ -142,8 +136,19 @@ async function* chatAloud(text, fresh) {
       if (turn !== voiceTurn) break; // a newer reply has the recorder now
       while (queue.length) yield queue.shift();
       if (chatDone && !doneAt) doneAt = Date.now();
-      const r = await pc.voiceRead();
-      if (r.error) { error = r.error; break; }
+      if (captureFailed) {
+        if (chatDone || Date.now() - t0 > 180000) break;
+        continue;
+      }
+      let r;
+      try {
+        r = await pc.voiceRead();
+        if (r.error) throw new Error(r.error);
+      } catch (e) {
+        console.warn(`Voice capture failed; continuing chat: ${e.message || String(e)}`);
+        captureFailed = true;
+        continue;
+      }
       if (r.peak > 400) {
         lastLoud = Date.now();
         // no sound session yet when she was to be turned down at the start: now there is one
@@ -163,7 +168,7 @@ async function* chatAloud(text, fresh) {
       if (before !== null) await loudAgain(daemon, before);
     }
   }
-  yield { voiceEnd: true, heard, error };
+  yield { voiceEnd: true, heard };
 }
 const QUIET = 6; // %: hardly heard in the room, and enough left for a clean voice once turned up
 // The volume to go back to is also kept in a file: a plugin stopped mid-reply puts it back on its next start.
@@ -287,6 +292,11 @@ const triggers = {};
 for (let n = 1; n <= store.BUTTON_COUNT; n++) {
   triggers[`button_${n}`] = { label: `Phone Remote: кнопка ${n} на телефоне`, fields: [] };
 }
+
+// The manifest's `client` is what lets the plugin write to the chat, and with it the SDK also opens
+// the chat firehose — which Astra refuses to every plugin. The SDK retries that every 2 s for ever,
+// filling both logs; nothing here reads the firehose, so it is not started.
+(Plugin.prototype as any).startChatFirehose = () => {};
 
 export const app = plugin({
   id: "phone-remote",

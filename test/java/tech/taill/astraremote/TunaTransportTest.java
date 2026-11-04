@@ -35,7 +35,8 @@ public final class TunaTransportTest {
             open.setAccessible(true);
             javax.net.ssl.HttpsURLConnection remote = (javax.net.ssl.HttpsURLConnection) open.invoke(pinned, TunaTunnel.HOST, "GET", "/", null, 10000);
             javax.net.ssl.HttpsURLConnection lan = (javax.net.ssl.HttpsURLConnection) open.invoke(pinned, "127.0.0.1", "GET", "/", null, 10000);
-            if (remote.getReadTimeout() < 30000 || lan.getReadTimeout() != 3000) throw new AssertionError("incorrect handshake budget");
+            // Android keeps this limit for the whole reply: a 3 s one here cut Astra's answers on home Wi-Fi
+            if (remote.getReadTimeout() < 30000 || lan.getReadTimeout() != 10000) throw new AssertionError("incorrect read limit");
         } finally { tunnel.close(); }
     }
     public static void main(String[] args) throws Exception {

@@ -427,7 +427,15 @@ export function createServer(deps) {
         // one JSON object per line, as the reply is written
         res.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" });
         let closed = false;
-        res.on("close", () => { closed = true; });
+        // Send a valid NDJSON heartbeat immediately and during silent model work.
+        // This flushes the headers and keeps the phone/tunnel from timing out while Astra thinks.
+        // Well under 3 s: APKs up to 0.8.2 keep their 3-second handshake limit as the read limit on
+        // home Wi-Fi (Android ignores setReadTimeout after connect), and drop any pause longer than that.
+        res.write('{"waiting":true}\n');
+        const heartbeat = setInterval(() => {
+          if (!closed && !res.writableNeedDrain) res.write('{"waiting":true}\n');
+        }, 1500);
+        res.on("close", () => { closed = true; clearInterval(heartbeat); });
         try {
           for await (const chunk of deps.chat(text, !!body.fresh, !!body.voice)) {
             if (closed) break;
@@ -435,6 +443,8 @@ export function createServer(deps) {
           }
         } catch (e) {
           if (!closed) res.write(JSON.stringify({ error: e.message || String(e) }) + "\n");
+        } finally {
+          clearInterval(heartbeat);
         }
         return res.end();
       }

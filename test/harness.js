@@ -16,7 +16,7 @@ const server = createServer({
   config: () => cfg,
   tuna: () => process.env.AR_TUNA === "1" ? { v: 1, url: "https://test.ru.tuna.am", key: "a".repeat(64) } : null,
   fireButton: async () => {},
-  chat: async function* (text) { yield { text: "echo: " + text }; yield { done: true }; },
+  chat: async function* (text) { if (process.env.AR_CHAT_DELAY) await new Promise((r) => setTimeout(r, Number(process.env.AR_CHAT_DELAY))); yield { text: "echo: " + text }; yield { done: true }; },
   onChange: () => {},
   // All new dangerous operations are fake even when feature permissions are enabled.
   runningTasks: async () => [{ pid: 4242, created: "133700000000000000", window: "1234", name: "Test editor", title: "Test document", memory: 123456, exe: "C:\\Private\\editor.exe" }],

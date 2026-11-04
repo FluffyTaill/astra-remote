@@ -743,9 +743,8 @@ function renderChat(main) {
   $("#new").onclick = () => {
     chatLog = [];
     store.set("chat", chatLog);
-    store.set("fresh", true);
     paintMsgs();
-    toast("Следующее сообщение начнёт новый диалог");
+    toast("История на телефоне очищена; контекст Astra сохранён");
   };
 }
 

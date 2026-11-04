@@ -497,7 +497,10 @@ final class Bridge {
                     }
                 }
             } catch (Exception e) {
-                if (!chatStopped) js("window.__chat(" + q(id) + "," + q(errorJson(e)) + ")");
+                String error = e instanceof SocketTimeoutException
+                        ? "Превышено время ожидания чата. Проверь соединение и повтори запрос; Astra могла продолжить выполнение."
+                        : message(e);
+                if (!chatStopped) js("window.__chat(" + q(id) + "," + q("{\"error\":" + q(error) + "}") + ")");
             } finally {
                 chatStopped = false;
                 chatConn = null;
