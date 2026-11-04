@@ -76,17 +76,31 @@ const NO_GRANT = (what) => `Astra не дала плагину право ${what
   "выключи Phone Remote, установи его заново и в окне установки отметь все разрешения.";
 
 const CHAT_HISTORY = path.join(process.env.APPDATA || ".", "astra", "astra", "config", "chat_history");
-async function* chat(text, _fresh, aloud = false) {
+let conversationId = ""; // the chat the app talks into; "" = this plugin's own thread
+async function* chat(text, fresh, aloud = false) {
+  if (fresh) conversationId = "";
   const since = Date.now();
-  try {
-    // An empty ID lets Astra choose the plugin's current thread. Cached IDs can
-    // be rotated or deleted, and older daemons may silently write to the wrong one.
-    yield* replyChunks(ctxRef.sendChatMessage(text, { voiceEnabled: aloud }), () => historyReply(CHAT_HISTORY, text, since), {
-      onEnd: ({ how, chunks, chars }) => console.log(`chat reply: ${how}; ${chunks} chunks, ${chars} chars, ${Date.now() - since} ms`)
-    });
-  } catch (e) {
-    if (e.code === 7) throw new Error(NO_GRANT("писать в чат"));
-    throw e;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const sentTo = conversationId;
+    try {
+      yield* replyChunks(ctxRef.sendChatMessage(text, { conversationId, voiceEnabled: aloud }), () => {
+        const reply = historyReply(CHAT_HISTORY, text, since);
+        if (reply.conversation) conversationId = reply.conversation;
+        return reply.text;
+      }, {
+        onConversation: (id) => { conversationId = id; },
+        onEnd: ({ how, chunks, chars }) => console.log(`chat reply: ${how}; ${chunks} chunks, ${chars} chars, ${Date.now() - since} ms, ${sentTo ? "saved conversation" : "new conversation"}`)
+      });
+      return;
+    } catch (e) {
+      // the conversation was deleted in Astra: start a new one, once
+      if (attempt === 0 && conversationId && (e.code === 5 || /conversation_gone/.test(e.message))) {
+        conversationId = "";
+        continue;
+      }
+      if (e.code === 7) throw new Error(NO_GRANT("писать в чат"));
+      throw e;
+    }
   }
 }
 

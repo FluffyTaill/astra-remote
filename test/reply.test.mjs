@@ -58,17 +58,44 @@ test("an error from Astra stays an error, and a refused call still throws", asyn
   await assert.rejects(collect(replyChunks(refused(), () => "", quick)), (e) => e.code === 7);
 });
 
+test("no reply anywhere: the phone is told instead of spinning", async () => {
+  const got = await collect(replyChunks(hangs({ conversationId: "c" }), () => "", { ...quick, giveUpMs: 60 }));
+  assert.equal(got.length, 1);
+  assert.match(got[0].error, /не ответила/);
+});
+
+test("the stream failing while the reply is at the phone does not bring the plugin down", async () => {
+  let failed = 0;
+  const seen = () => { failed++; };
+  process.on("unhandledRejection", seen);
+  async function* s() { yield { text: "А" }; throw new Error("gone"); }
+  await assert.rejects(async () => {
+    for await (const _ of replyChunks(s(), () => "", quick)) await new Promise((r) => setTimeout(r, 20));
+  }, /gone/);
+  await new Promise((r) => setTimeout(r, 20));
+  process.off("unhandledRejection", seen);
+  assert.equal(failed, 0);
+});
+
+test("the stream names its conversation", async () => {
+  async function* s() { yield { conversationId: "c1" }; yield { done: true, text: "ok" }; }
+  let id = "";
+  await collect(replyChunks(s(), () => "", { ...quick, onConversation: (c) => { id = c; } }));
+  assert.equal(id, "c1");
+});
+
 test("the history: the answer to this message, not another chat's or an older one", () => {
   const hist = fs.mkdtempSync(path.join(os.tmpdir(), "hist-"));
   const now = Date.now(), iso = (d) => new Date(now + d).toISOString();
   const line = (role, content, d) => JSON.stringify({ role, content, created_at: iso(d) });
   fs.writeFileSync(path.join(hist, "a.jsonl"), [line("user", "Привет", -60000), line("assistant", "старый ответ", -59000)].join("\n") + "\n");
-  assert.equal(historyReply(hist, "Привет", now), "", "an older exchange is not this one");
+  const said = (t) => historyReply(hist, t, now).text;
+  assert.equal(said("Привет"), "", "an older exchange is not this one");
   fs.writeFileSync(path.join(hist, "b.jsonl"), [line("user", "другое", 100), line("assistant", "чужой ответ", 200)].join("\n") + "\n");
-  assert.equal(historyReply(hist, "Привет", now), "");
+  assert.equal(said("Привет"), "");
   fs.appendFileSync(path.join(hist, "a.jsonl"), line("user", "Привет", 100) + "\n");
-  assert.equal(historyReply(hist, "Привет", now), "", "no answer yet");
+  assert.equal(said("Привет"), "", "no answer yet");
   fs.appendFileSync(path.join(hist, "a.jsonl"), line("assistant", "новый ответ", 300) + "\n");
-  assert.equal(historyReply(hist, "Привет", now), "новый ответ");
-  assert.equal(historyReply(path.join(hist, "нет такой"), "Привет", now), "");
+  assert.deepEqual(historyReply(hist, "Привет", now), { text: "новый ответ", conversation: "a" });
+  assert.equal(historyReply(path.join(hist, "нет такой"), "Привет", now).text, "");
 });

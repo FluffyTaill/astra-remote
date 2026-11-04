@@ -4,8 +4,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
-// The assistant's answer to `text`, sent no earlier than `since` (ms), from the newest history files.
-// A conversation's file is one JSON message per line: { role, content, created_at }.
+// The assistant's answer to `text`, sent no earlier than `since` (ms), from the newest history files,
+// as { text, conversation }. A conversation's file is <its id>.jsonl, one JSON message per line:
+// { role, content, created_at }.
 export function historyReply(dir, text, since) {
   let files = [];
   try {
@@ -13,7 +14,7 @@ export function historyReply(dir, text, since) {
       .map((f) => ({ f: path.join(dir, f), at: fs.statSync(path.join(dir, f)).mtimeMs }))
       .filter((x) => x.at >= since - 2000).sort((a, b) => b.at - a.at).slice(0, 5);
   } catch {
-    return "";
+    return { text: "", conversation: "" };
   }
   const want = String(text).trim();
   for (const { f } of files) {
@@ -30,17 +31,20 @@ export function historyReply(dir, text, since) {
     });
     if (at < 0) continue;
     const reply = rows.slice(at + 1).find((m) => m.role === "assistant" && String(m.content ?? "").trim());
-    if (reply) return String(reply.content);
+    if (reply) return { text: String(reply.content), conversation: path.basename(f, ".jsonl") };
   }
-  return "";
+  return { text: "", conversation: "" };
 }
 
 // The stream's chunks as { text } / { done } / { error }. `read()` gives the finished reply from the
 // history, "" while there is none; it is asked after `silenceMs` without a chunk and when the stream
-// ends unfinished. `onEnd` hears how the reply went, for the log.
-export async function* replyChunks(stream, read, { silenceMs = 3000, tickMs = 500, onEnd = () => {} } = {}) {
+// ends unfinished. After `giveUpMs` of silence with no reply the phone is told, not left spinning.
+// `onConversation` hears the stream's conversation; `onEnd` hears how the reply went, for the log.
+export async function* replyChunks(stream, read, { silenceMs = 3000, tickMs = 500, giveUpMs = 600000, onConversation = () => {}, onEnd = () => {} } = {}) {
   const it = stream[Symbol.asyncIterator]();
-  let got = "", chunks = 0, last = Date.now(), next = it.next();
+  // handled at once: the stream can fail while the reply waits for the phone, with nobody awaiting it
+  const pull = () => { const p = it.next(); p.catch(() => {}); return p; };
+  let got = "", chunks = 0, last = Date.now(), next = pull();
   const finish = (how) => onEnd({ how, chunks, chars: got.length });
   // what the history has beyond what already reached the phone
   const rest = () => {
@@ -56,11 +60,16 @@ export async function* replyChunks(stream, read, { silenceMs = 3000, tickMs = 50
     if (r === null) {
       if (Date.now() - last < silenceMs) continue;
       const more = rest();
-      if (more === null) continue;
+      if (more === null) {
+        if (Date.now() - last < giveUpMs) continue;
+        it.return?.().catch?.(() => {});
+        yield { error: "Astra не ответила. Посмотри чат на ПК и повтори запрос." };
+        finish("gave up, no reply in the stream or the history");
+        return;
+      }
       if (more) yield { text: more };
       yield { done: true };
       finish("history, the stream went silent");
-      next.catch(() => {}); // what it does from here on no longer matters
       it.return?.().catch?.(() => {});
       return;
     }
@@ -68,7 +77,8 @@ export async function* replyChunks(stream, read, { silenceMs = 3000, tickMs = 50
     const chunk = r.value;
     chunks++;
     last = Date.now();
-    next = it.next();
+    next = pull();
+    if (chunk.conversationId) onConversation(chunk.conversationId);
     if (chunk.error) {
       yield { error: chunk.error };
       finish("error: " + chunk.error);

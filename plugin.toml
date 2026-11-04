@@ -1,7 +1,7 @@
 [plugin]
 id = "phone-remote"
 name = "Phone Remote"
-version = "0.8.4"
+version = "0.8.5"
 description = "Control your PC and talk to Astra from Android: commands, music, volume, files, clipboard and screenshots. Home Wi-Fi or a free TUNA HTTP tunnel, with end-to-end PC certificate pinning and no router port forwarding."
 author = "Taill"
 license = "MIT"
